@@ -36,7 +36,7 @@ test('목표 와트·비교: FTP×%(내림), 경계 포함, 자유 구간·FTP �
 });
 
 test('세션 파일 검사와 기본 세션', () => {
-  assert.throws(() => checkPlan({ name: 'x', steps: [{ sec: 5, lo: 50, hi: 60 }] }), /10초/);
+  assert.throws(() => checkPlan({ name: 'x', steps: [{ sec: 4, lo: 50, hi: 60 }] }), /5초/);
   assert.throws(() => checkPlan({ name: 'x', steps: [{ sec: 60, lo: 70, hi: 60 }] }), /아래 ≤ 위/);
   assert.throws(() => checkPlan({ name: 'x', steps: [{ sec: 60, lo: 70 }] }), /둘 다/);
   assert.throws(() => checkPlan({ steps: [{ sec: 60 }] }), /이름/);
@@ -141,4 +141,39 @@ test('여러 그룹 대상: 중E·중S 만 목표·기록', () => {
   const run = new SessionRun(plan, { group: '중E,중S' });
   assert.equal(run.group, '중E·중S'); assert.ok(run.includes('중E')); assert.ok(run.includes('중S')); assert.ok(!run.includes('고E')); assert.ok(!run.includes(null));
   assert.ok(new SessionRun(plan, { group: ['고E'] }).includes('고E')); assert.ok(new SessionRun(plan).includes(null));
+});
+
+test('12월 실내(스마트 로라) 세션: 달력 날짜마다 맞는 세션이 있고, 시간표·총 시간이 달력·세부표와 같다', () => {
+  const by = id => TEAM_SESSIONS.find(p => p.id === id), min = p => Math.round(totalSec(p) / 6) / 10;
+  const starts = (p, prefix) => { let t = 0; const out = []; for (const st of p.steps) { if (st.label.startsWith(prefix)) out.push(Math.round(t / 6) / 10); t += st.sec; } return out; };
+  // 월간스케줄 12월 초안의 스마트로라 칸(웨이트·평롤러·와트바이크·르몽드 부분 제외) → 세션
+  const DEC = {
+    '12/01': ['all-cad4x2', 'hS-spin4', 'hS-z2-30'], '12/02': ['z2-45', 'z2-1h'], '12/03': ['all-drift'], '12/05': ['z2-1h30'], '12/06': ['z2-1h', 'hS-spin4', 'z2-45'],
+    '12/08': ['m-cad7x2', 'hE-sst2x20-lc4x5', 'hS-spin8', 'hS-z2-30'], '12/09': ['m-z2-1h-110', 'z2-120', 'z2-1h'], '12/12': ['m-itt3x10-z2', 'hE-itt3x10-z2', 'hS-sat-spin6-z2-sprint5'],
+    '12/13': ['z2-1h', 'z2-150', 'hS-spin5', 'hS-z2-1h-ladder'], '12/15': ['m-cad8x2', 'hE-sst3x15', 'hS-spin8', 'hS-z2-30'], '12/16': ['m-z2-1h15-110', 'z2-105', 'z2-1h'],
+    '12/17': ['hE-vo2-6x3'], '12/19': ['m-sst3x10', 'hE-sat-sst-thr-omn', 'hS-sat-spin6-z2-sprint5'], '12/20': ['z2-75', 'z2-150', 'hS-spin6', 'hS-z2-1h-ladder'],
+    '12/22': ['m-cad8x2-z20', 'hE-sst2x25', 'hS-spin8', 'hS-z2-30'], '12/23': ['m-z2-1h15-110', 'z2-135', 'z2-1h'], '12/24': ['hE-vo2-5x4'],
+    '12/26': ['m-sst3x12', 'hE-sat-sst-thr2-tempo', 'hS-sat-spin6-z2-sprint6'], '12/27': ['z2-1h30', 'z2-150', 'hS-spin6', 'hS-z2-1h15-ladder'],
+    '12/29': ['all-cad4x2', 'hS-spin4', 'hS-z2-30'], '12/30': ['z2-45'],
+  };
+  for (const [day, ids] of Object.entries(DEC)) for (const id of ids) assert.ok(by(id), `${day} ${id}`);
+  assert.equal(new Set(TEAM_SESSIONS.map(p => p.id)).size, TEAM_SESSIONS.length, 'id 겹침 없음');
+  // 토요일 장거리: 달력 「자전거」 총 시간과 같다(중등 2h30m · 고E 3h30m), 고S 는 스핀업 + Z2 2h40m
+  for (const id of ['m-itt3x10-z2', 'm-sst3x10', 'm-sst3x12']) assert.equal(min(by(id)), 150, id);
+  for (const id of ['hE-itt3x10-z2', 'hE-sat-sst-thr-omn', 'hE-sat-sst-thr2-tempo']) assert.equal(min(by(id)), 210, id);
+  for (const n of [5, 6]) assert.equal(min(by(`hS-sat-spin6-z2-sprint${n}`)) - min(by('hS-spin6')), 160);
+  // 달력의 세트 수
+  assert.deepEqual(starts(by('hE-sst3x15'), 'LC').length, 4); assert.ok(by('hE-sst3x15').steps.filter(s => s.label.startsWith('LC')).every(s => s.sec === 360));
+  assert.equal(starts(by('hE-sst2x25'), 'LC').length, 5); assert.equal(starts(by('hE-vo2-5x4'), 'VO2').length, 5);
+  assert.equal(starts(by('m-cad8x2-z20'), 'CAD').length, 8); assert.equal(starts(by('hS-sat-spin6-z2-sprint6'), '스프린트').length, 6);
+  // 세부표 시각: 스핀업 10:00 / 11:38 / 13:16 …(11/17), 110rpm 20·28·36분(11/18), 케이던스 단계 10~28분(11/29)
+  assert.deepEqual(starts(by('hS-spin6'), '스핀업'), [10, 11.6, 13.3, 14.9, 16.5, 18.2]);
+  assert.deepEqual(starts(by('m-z2-1h-110'), '110rpm'), [20, 28, 36]);
+  assert.deepEqual(starts(by('hS-z2-1h-ladder'), '90rpm'), [10, 13]); assert.deepEqual(starts(by('hS-z2-1h-ladder'), '120rpm'), [22, 25]);
+  // 심박 비교: 앞·뒤 20분 같은 파워(65%FTP), 와트바이크 순번 동안은 자유
+  const drift = by('all-drift').steps; assert.deepEqual(drift.filter(s => s.label.startsWith('Z2')).map(s => [s.sec, s.lo, s.hi]), [[1200, 65, 65], [1200, 65, 65]]);
+  assert.equal(drift[1].lo, null);
+  // 역치는 존 경계 91~105, 목록은 그룹 묶음으로 나뉜다
+  for (const p of TEAM_SESSIONS) for (const st of p.steps) { if (st.label === '역치') assert.deepEqual([st.lo, st.hi], [91, 105], p.id); assert.ok(st.label.length <= 20, st.label); }
+  assert.deepEqual([...new Set(TEAM_SESSIONS.map(p => p.section))], ['고등 E', '중등 E·S', '고등 S', '전체 · 회복 주 · Z2']);
 });

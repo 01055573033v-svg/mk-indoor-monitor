@@ -2,6 +2,8 @@
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 html, body { height: 100%; }
+/* 대형 화면(11-27): 글자·버튼·여백을 화면 폭에 맞춰 키운다. 1920 폭까지는 16px 그대로, 4K(3840, 배율 1)는 32px → 1080p 와 같은 모습. */
+html { font-size: clamp(16px, calc(100vw / 120), 40px); }
 body { display: flex; flex-direction: column; margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; }
 button, input { font: inherit; }
 button { background: var(--card); color: var(--text); border: 1px solid var(--line); border-radius: .5rem; padding: .5rem .9rem; min-height: 2.75rem; cursor: pointer; }
@@ -79,3 +81,9 @@ dialog .row { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
 .tile .head .who { font-size: .9rem; font-weight: 600; color: var(--muted); margin-left: .5rem; }
 .tile.ended { opacity: .6; }
 .stack { display: flex; flex-direction: column; gap: .5rem; margin: .5rem 0; }
+/* ── 3단계 준비: 연결 진단 ── */
+.verdict { font-size: 1.3rem; font-weight: 800; padding: .5rem .8rem; border-radius: .5rem; background: var(--bg); }
+.verdict[data-state="ok"] { color: var(--ok); } .verdict[data-state="fail"] { color: var(--lost); } .verdict[data-state="wait"] { color: var(--late); }
+.guide { line-height: 1.7; margin: .4rem 0 .8rem; }
+.scroll table.diag td, .scroll table.diag th { text-align: left; white-space: normal; }
+.diag tr[data-state="ok"] td:first-child { color: var(--ok); } .diag tr[data-state="fail"] td:first-child { color: var(--lost); } .diag tr[data-state="wait"] td:first-child { color: var(--late); }

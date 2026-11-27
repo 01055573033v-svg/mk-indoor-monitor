@@ -33,24 +33,36 @@ export class WebUsbTransport {
   constructor(device, { name, networkKey, now = () => performance.now() }) {
     Object.assign(this, { device, name, networkKey, now });
     this.parser = new Parser(); this.running = false; this.waiters = [];
+    // 3단계 연결 진단(11-27): 선테스트 1~4 단계별 결과와 수신 통계. 화면 「연결 진단」이 읽는다(저장·전송 없음).
+    this.diag = { steps: [], error: null, startedAt: null, firstPacketMs: null, packets: 0, extended: 0, devices: new Set(), types: new Set() };
   }
+  /** 진단 한 줄: name · ok · ms(걸린 시간) · note. */
+  mark(name, ok, t0, note = '') { this.diag.steps.push({ name, ok, ms: Math.round(this.now() - t0), note }); return ok; }
 
   async start({ onPacket, onStatus }) {
     this.onPacket = onPacket; this.onStatus = onStatus ?? (() => {});
-    const d = this.device;
+    const d = this.device, fail = (msg) => { this.diag.error = msg; throw new Error(msg); };
+    this.diag.startedAt = this.now();
     this.onStatus('여는 중');
-    if (!d.opened) await d.open();
-    if (d.configuration === null) await d.selectConfiguration(1);
+    let t0 = this.now();
+    try { if (!d.opened) await d.open(); if (d.configuration === null) await d.selectConfiguration(1); this.mark('open', true, t0); }
+    catch (e) { this.mark('open', false, t0, e.message); fail(`동글을 열지 못했습니다(선테스트 1): ${e.message}`); }
+    t0 = this.now();
     const ep = findEndpoints(d);
-    if (!ep) throw new Error('ANT 송수신 엔드포인트를 찾지 못했습니다(선테스트 2 실패 → 브리지 검토)');
+    this.mark('endpoints', !!ep, t0, ep ? `in ${ep.input} · out ${ep.output} · ${ep.packetSize}B` : '');
+    if (!ep) fail('ANT 송수신 엔드포인트를 찾지 못했습니다(선테스트 2 실패 → 브리지 검토)');
     this.ep = ep;
-    await d.claimInterface(ep.interfaceNumber);
+    t0 = this.now();
+    try { await d.claimInterface(ep.interfaceNumber); this.mark('claim', true, t0); }
+    catch (e) { this.mark('claim', false, t0, e.message); fail(`동글을 다른 프로그램이 쓰고 있을 수 있습니다(Zwift·Garmin Express 같은 ANT 프로그램을 끄고 동글을 다시 꽂아 주세요): ${e.message}`); }
     this.running = true;
     this.readLoop();
     for (const step of scanSetup(this.networkKey)) {
-      let ok = await this.command(step);
-      if (!ok && step.fallback) ok = await this.command({ ...step, bytes: step.fallback });
-      if (!ok && step.name !== 'reset') throw new Error(`스캔 준비 실패: ${step.name}`);   // reset 은 시작 메시지를 안 보내는 동글도 있어 넘어간다
+      t0 = this.now();
+      let ok = await this.command(step), note = '';
+      if (!ok && step.fallback) { ok = await this.command({ ...step, bytes: step.fallback }); note = ok ? '줄인 설정으로 성공(기기 번호만)' : ''; }
+      this.mark(step.name, ok, t0, note || (!ok && step.name === 'reset' ? '시작 메시지 없음(넘어감)' : ''));
+      if (!ok && step.name !== 'reset') fail(`스캔 준비 실패: ${step.name}`);   // reset 은 시작 메시지를 안 보내는 동글도 있어 넘어간다
     }
     this.onStatus('스캔 중');
   }
@@ -81,7 +93,11 @@ export class WebUsbTransport {
         const hit = this.waiters.find(w => w(msg));
         if (hit) { this.waiters = this.waiters.filter(w => w !== hit); continue; }
         const b = parseBroadcast(msg);
-        if (b) this.onPacket(t, b);
+        if (b) {
+          const g = this.diag; g.packets++; if (g.firstPacketMs === null) g.firstPacketMs = Math.round(t - g.startedAt);
+          if (b.extended) { g.extended++; g.devices.add(`${b.deviceType}:${b.deviceNumber}`); g.types.add(b.deviceType); }
+          this.onPacket(t, b);
+        }
       }
     }
   }

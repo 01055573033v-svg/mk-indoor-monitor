@@ -11,13 +11,14 @@ import { Room } from './core/room.js';
 import { loadHistory, saveToHistory, removeFromHistory, toCsv } from './core/record.js';
 import { FileRosterSource, applyRoster, exportRoster } from './core/roster.js';
 import { zoneOf } from './core/zones.js';
+import { preChecks, dongleRows, verdict } from './core/diagnose.js';
 
 const $ = id => document.getElementById(id);
 const KEY_STORE = 'mk-indoor-monitor.netkey';
 const NAMES = ['A', 'B', 'C', 'D'];
 let settings = new Settings(localStorage), hub = new Hub(settings), mock = null, size = 2;
 let room = new Room(settings), customPlan = null, lastResult = null;   // room: 그룹별 세션들(3단계)
-const transports = new Map();
+const transports = new Map(), failed = new Map();   // failed: 열다 실패한 동글(이름 → 진단 기록, 연결 진단 화면용)
 const memory = () => { const m = new Map(); return { getItem: k => m.get(k) ?? null, setItem: (k, v) => m.set(k, v) }; };
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const dash = v => v === null || v === undefined ? '—' : v;
@@ -132,7 +133,11 @@ $('sessions').addEventListener('click', ev => {
 // ── 세션 시작·끝 ──
 function selectedPlan() { return $('preset').value === 'custom' && customPlan ? customPlan : PRESETS.find(p => p.id === $('preset').value) ?? PRESETS[0]; }
 function fillPresets() {
-  $('preset').replaceChildren(...PRESETS.map(p => new Option(`${p.name} (${mmss(totalSec(p))})`, p.id)), ...(customPlan ? [new Option(`파일: ${customPlan.name} (${mmss(totalSec(customPlan))})`, 'custom')] : []));
+  // 세션이 38개라 그룹 묶음(optgroup)으로 나눈다(11-27 12월 세션 보완).
+  const groups = new Map();
+  for (const p of PRESETS) { const k = p.section ?? '기타'; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(new Option(`${p.name} (${mmss(totalSec(p))})`, p.id)); }
+  const optgroups = [...groups].map(([label, opts]) => { const g = document.createElement('optgroup'); g.label = label; g.append(...opts); return g; });
+  $('preset').replaceChildren(...optgroups, ...(customPlan ? [new Option(`파일: ${customPlan.name} (${mmss(totalSec(customPlan))})`, 'custom')] : []));
 }
 function previewPlan() {
   const plan = selectedPlan();
@@ -277,7 +282,7 @@ async function openDongle(device) {
   const t = new WebUsbTransport(device, { name, networkKey: key });
   transports.set(device, t);
   try { await t.start({ onPacket: (at, b) => hub.receive(name, at, b), onStatus: s => hub.setDongleStatus(name, s) }); notice(''); }
-  catch (e) { hub.setDongleStatus(name, '실패'); notice(`동글 ${name}: ${e.message}`); transports.delete(device); }
+  catch (e) { hub.setDongleStatus(name, '실패'); notice(`동글 ${name}: ${e.message} — 「연결 진단」에서 막힌 단계를 볼 수 있습니다`); transports.delete(device); failed.set(name, t); }
 }
 $('connect').addEventListener('click', async () => {
   stopMock(); keepAwake(); audio ??= new AudioContext();
@@ -369,3 +374,19 @@ $('size').addEventListener('click', () => { size = size % 3 + 1; $('board').clas
 $('full').addEventListener('click', () => { keepAwake(); document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.(); });
 
 buildBoard(); render(); setInterval(render, 1000);
+
+// ── 3단계 준비: 연결 진단(선테스트 1~4 · 받기 통계). 열려 있는 동안 1초마다 다시 그린다. 키 값은 보이지 않는다 ──
+const STATE_MARK = { ok: '✓', fail: '✕', wait: '…' };
+async function drawDiag() {
+  const known = (await knownDongles().catch(() => [])).length;
+  const pre = preChecks({ usb: !!navigator.usb, secure: window.isSecureContext, key: !!parseNetworkKey(localStorage.getItem(KEY_STORE)), known });
+  const live = [...transports.values()].map(t => ({ name: t.name, rows: dongleRows(t.diag), sensors: t.diag.devices.size }));
+  const dead = [...failed].filter(([n]) => !live.some(d => d.name === n)).map(([name, t]) => ({ name: `${name} (실패)`, rows: dongleRows(t.diag), sensors: 0 }));
+  const all = [...live, ...dead], v = verdict(pre, all);
+  const table = (title, rows) => `<tr><th colspan="3">${esc(title)}</th></tr>${rows.map(r => `<tr data-state="${r.state}"><td>${STATE_MARK[r.state]} ${esc(r.label)}</td><td>${esc(r.detail)}</td><td class="muted">${esc(r.hint)}</td></tr>`).join('')}`;
+  $('diag-verdict').textContent = v.text; $('diag-verdict').dataset.state = v.state;
+  $('diag-table').innerHTML = table('꽂기 전', pre) + all.map(d => table(`동글 ${d.name}`, d.rows)).join('');
+}
+let diagTimer = null;
+$('diag-btn').addEventListener('click', () => { drawDiag(); $('diag').showModal(); diagTimer ??= setInterval(drawDiag, 1000); });
+$('diag').addEventListener('close', () => { clearInterval(diagTimer); diagTimer = null; });

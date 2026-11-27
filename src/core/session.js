@@ -7,10 +7,10 @@ import { TEAM_SESSIONS } from './team-sessions.js';
 const step = (label, min, lo, hi) => ({ label, sec: Math.round(min * 60), lo, hi });
 
 // 기본 목록 = 시연 5분(모의 확인용) + 우리 팀 실내 세션(team-sessions.js, 11-27 코치 지시: 세션 처방 시트 반영).
-export const DEMO = { id: 'demo-5m', name: '시연 5분(모의 확인용)', groups: [], source: '모의 확인용', steps: [step('W-up', 1, 50, 60), step('템포', 1, 76, 90), step('휴식', 0.5, 45, 55), step('VO2', 1, 106, 120), step('휴식', 0.5, 45, 55), step('쿨다운', 1, 40, 55)] };
+export const DEMO = { id: 'demo-5m', name: '시연 5분(모의 확인용)', groups: [], section: '시연', source: '모의 확인용', steps: [step('W-up', 1, 50, 60), step('템포', 1, 76, 90), step('휴식', 0.5, 45, 55), step('VO2', 1, 106, 120), step('휴식', 0.5, 45, 55), step('쿨다운', 1, 40, 55)] };
 export const PRESETS = Object.freeze([...TEAM_SESSIONS, DEMO]);
 
-/** 사용자 세션(JSON) 검사: 구간 1~60개, 구간 10초~3시간, %FTP 30~200(lo ≤ hi) 또는 둘 다 비움. */
+/** 사용자 세션(JSON) 검사: 구간 1~60개, 구간 5초~3시간(스핀업 8초가 있어 11-27 10초 → 5초), %FTP 30~200(lo ≤ hi) 또는 둘 다 비움. */
 export function checkPlan(plan) {
   if (!plan || typeof plan !== 'object') throw new Error('세션 형식이 아닙니다');
   const name = String(plan.name ?? '').trim().slice(0, 40), steps = plan.steps;
@@ -18,7 +18,7 @@ export function checkPlan(plan) {
   if (!Array.isArray(steps) || steps.length < 1 || steps.length > 60) throw new Error('구간은 1~60개');
   const out = steps.map((s, i) => {
     const sec = Number(s?.sec), lo = s?.lo ?? null, hi = s?.hi ?? null;
-    if (!Number.isInteger(sec) || sec < 10 || sec > 10800) throw new Error(`${i + 1}번 구간 시간은 10초~3시간`);
+    if (!Number.isInteger(sec) || sec < 5 || sec > 10800) throw new Error(`${i + 1}번 구간 시간은 5초~3시간`);
     if ((lo === null) !== (hi === null)) throw new Error(`${i + 1}번 구간 %FTP는 둘 다 넣거나 둘 다 비웁니다`);
     if (lo !== null && !(Number.isInteger(lo) && Number.isInteger(hi) && lo >= 30 && hi <= 200 && lo <= hi)) throw new Error(`${i + 1}번 구간 %FTP는 30~200 정수, 아래 ≤ 위`);
     return { label: String(s?.label ?? `구간 ${i + 1}`).slice(0, 20), sec, lo, hi };
