@@ -63,7 +63,7 @@ test('기록 요약: 초마다 1번, 그룹 밖 선수 제외, 평균·최대·�
   assert.deepEqual(a.steps.map(x => x.inTarget), [100, null, 100]); assert.deepEqual(a.steps.map(x => x.avgPower), [110, 150, 225]);
   assert.equal(b.inTarget, 0); assert.equal(b.recorded, 99); assert.equal(b.kj, Math.round(100 * 149 / 1000));
   assert.equal(a.avgHr, 150); assert.equal(a.avgCadence, 90);
-  const csv = toCsv(sum).split('\n'); assert.equal(csv.length, 3); assert.match(csv[0], /^세션,시작,모의,선수,그룹,FTP,평균W/); assert.match(csv[1], /^시험,2026-11-27T01:00:00.000Z,,P01,고E,200,/);
+  const csv = toCsv(sum).split('\n'); assert.equal(csv.length, 3); assert.match(csv[0], /^세션,시작,모의,선수,그룹,참여,기록 시작\(초\),기록 끝\(초\),FTP,평균W/); assert.match(csv[1], /^시험,2026-11-27T01:00:00.000Z,,P01,고E,함께,0,150,200,/);
 });
 
 test('기록 저장: 최근 30개, 같은 시작 시각은 덮음, 지우기, 형식 틀린 것·P코드 아닌 것은 버림', () => {

@@ -40,7 +40,8 @@ dialog input { background: var(--bg); color: var(--text); border: 1px solid var(
 menu { display: flex; gap: .5rem; justify-content: flex-end; padding: 0; }
 @media (max-width: 900px) { .board { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 /* ── 2단계: 세션 줄 · 목표 비교 · 그래프 · 결과 ── */
-.session { margin: .3rem 1rem 0; padding: .4rem .8rem; border: 1px solid var(--line); border-radius: .8rem; display: grid; grid-template-columns: 1fr auto; gap: .2rem 1rem; align-items: center; }
+.sessions { display: flex; flex-wrap: wrap; gap: .5rem; margin: .3rem 1rem 0; }
+.session { flex: 1 1 28rem; min-width: 0; margin: 0; padding: .4rem .8rem; border: 1px solid var(--line); border-radius: .8rem; display: grid; grid-template-columns: 1fr auto; gap: .2rem 1rem; align-items: center; }
 .session .now { font-size: 1.5rem; font-variant-numeric: tabular-nums; }
 .session .now .big { font-size: 2rem; font-weight: 900; margin-left: .6rem; }
 .session .meta { grid-column: 1; color: var(--muted); }
@@ -71,3 +72,10 @@ dialog .row { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
 .board.in-session .tile .watts { font-size: clamp(2.2rem, 7vh, 7rem); }
 .board.in-session.size-1 .tile .watts { font-size: clamp(2rem, 5vh, 4.5rem); }
 .board.in-session.size-3 .tile .watts { font-size: clamp(3rem, 9vh, 8.5rem); }
+.session .now .s-group { background: var(--text); color: var(--bg); border-radius: .3rem; padding: 0 .4rem; margin-right: .3rem; }
+.sessions .session .now { font-size: 1.25rem; } .sessions .session .now .big { font-size: 1.6rem; }
+.sessions .session .profile { height: 2.2rem; }
+.board.in-session .tile { cursor: pointer; }
+.tile .head .who { font-size: .9rem; font-weight: 600; color: var(--muted); margin-left: .5rem; }
+.tile.ended { opacity: .6; }
+.stack { display: flex; flex-direction: column; gap: .5rem; margin: .5rem 0; }

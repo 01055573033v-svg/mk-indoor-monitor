@@ -6,8 +6,9 @@ import { parseNetworkKey, sensorKey, parseBroadcast } from './ant/scan.js';
 import { Parser } from './ant/message.js';
 import { WebUsbTransport, pickDongle, knownDongles } from './transport/webusb.js';
 import { MockField, MockDongle, MockRider } from './transport/mock.js';
-import { PRESETS, checkPlan, totalSec, targetWatts, compare, SessionRun, mmss } from './core/session.js';
-import { Recorder, loadHistory, saveToHistory, removeFromHistory, toCsv } from './core/record.js';
+import { PRESETS, checkPlan, totalSec, targetWatts, compare, mmss } from './core/session.js';
+import { Room } from './core/room.js';
+import { loadHistory, saveToHistory, removeFromHistory, toCsv } from './core/record.js';
 import { FileRosterSource, applyRoster, exportRoster } from './core/roster.js';
 import { zoneOf } from './core/zones.js';
 
@@ -15,7 +16,7 @@ const $ = id => document.getElementById(id);
 const KEY_STORE = 'mk-indoor-monitor.netkey';
 const NAMES = ['A', 'B', 'C', 'D'];
 let settings = new Settings(localStorage), hub = new Hub(settings), mock = null, size = 2;
-let run = null, recorder = null, customPlan = null, lastResult = null;
+let room = new Room(settings), customPlan = null, lastResult = null;   // room: 그룹별 세션들(3단계)
 const transports = new Map();
 const memory = () => { const m = new Map(); return { getItem: k => m.get(k) ?? null, setItem: (k, v) => m.set(k, v) }; };
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -30,7 +31,7 @@ function buildBoard() {
   const board = $('board'); board.replaceChildren(); tiles.clear(); trail.clear();
   for (const code of settings.codes()) {
     const el = document.createElement('article'); el.className = 'tile'; el.dataset.level = LEVELS.NONE;
-    el.innerHTML = '<div class="head"><span><span class="code"></span><span class="grp"></span></span><span class="state"></span></div><div class="mid"><div class="watts"></div><svg class="spark" viewBox="0 0 90 100" preserveAspectRatio="none" aria-hidden="true"></svg></div><div class="target" hidden></div><div class="sub"><span class="ftp"></span><span class="cad"></span><span class="hr"></span></div><span class="zone" hidden></span><span class="via" hidden></span>';
+    el.innerHTML = '<div class="head"><span><span class="code"></span><span class="grp"></span><span class="who"></span></span><span class="state"></span></div><div class="mid"><div class="watts"></div><svg class="spark" viewBox="0 0 90 100" preserveAspectRatio="none" aria-hidden="true"></svg></div><div class="target" hidden></div><div class="sub"><span class="ftp"></span><span class="cad"></span><span class="hr"></span></div><span class="zone" hidden></span><span class="via" hidden></span>';
     el.querySelector('.code').textContent = code;
     board.append(el); tiles.set(code, el); trail.set(code, []);
   }
@@ -49,21 +50,23 @@ function sparkSvg(points) {
 
 function render() {
   const now = performance.now(), view = hub.snapshot(now);
-  const pos = run ? run.at(now) : null;
-  if (run && pos.done && !run.finished) finishSession(now);
+  for (const s of room.tick(now, view.tiles)) finished(s);
   for (const t of view.tiles) {
     const el = tiles.get(t.code); if (!el) continue;
     const group = settings.group(t.code), ftp = settings.ftp(t.code);
-    const target = run && pos && run.includes(group) ? targetWatts(pos.step, ftp) : null, cmp = compare(t.power, target);
+    const place = room.place(t.code), entry = place.state === 'active' ? place.entry : null, pos = entry ? entry.run.at(now) : null;
+    const target = pos ? targetWatts(pos.step, ftp) : null, cmp = compare(t.power, target);
     el.dataset.level = t.level;
     el.dataset.cmp = cmp?.state ?? '';
     el.classList.toggle('hidden', t.level === LEVELS.NONE && $('pair').getAttribute('aria-pressed') !== 'true' && hideEmpty);
     el.classList.toggle('alerting', !!t.alerting);
     el.querySelector('.grp').textContent = group ?? '';
+    el.querySelector('.who').textContent = !place.entry ? (room.entries.length ? '세션 없음' : '') : `${sessionTag(place.entry)}${place.state === 'ended' ? ' · 끝냄' : ''}`;
+    el.classList.toggle('ended', place.state === 'ended');
     el.querySelector('.state').textContent = t.level === LEVELS.OK ? '' : t.lost.length ? `${t.level} · ${t.lost.map(r => ({ power: '파워', hr: '심박', cadence: '케이던스' })[r]).join('·')}` : t.level;
     el.querySelector('.watts').innerHTML = t.power === null ? '—' : `${t.power}<small>W</small>`;
     const tg = el.querySelector('.target');
-    tg.hidden = !(run && run.includes(group) && pos.step.lo !== null);
+    tg.hidden = !(pos && pos.step.lo !== null);
     tg.dataset.cmp = cmp?.state ?? '';
     tg.textContent = !target ? (ftp ? '' : '목표: FTP 없음') : `목표 ${target.low}–${target.high}W · ${!cmp ? '—' : cmp.state === 'in' ? '✓ 범위 안' : cmp.state === 'low' ? `▼ ${-cmp.diff}W 낮음` : `▲ ${cmp.diff}W 높음`}`;
     el.querySelector('.ftp').textContent = t.ftpPercent === null ? 'FTP —' : `${t.ftpPercent}%`;
@@ -74,8 +77,7 @@ function render() {
     const tr = trail.get(t.code); tr.push({ p: t.power, lo: target?.low ?? null, hi: target?.high ?? null }); if (tr.length > TRAIL) tr.shift();
     el.querySelector('.spark').innerHTML = sparkSvg(tr);
   }
-  if (recorder && run && !run.finished) recorder.tick(now, view.tiles);
-  renderSession(pos);
+  renderSessions(now);
   if (view.alerts.length) beep();
   $('dongles').replaceChildren(...view.dongles.map(d => { const s = document.createElement('span');
     s.textContent = `동글 ${d.name}: ${d.status} · 센서 ${d.sensors} · 초당 ${d.perSecond ?? '—'}건 · 빠짐 ${d.missing === null ? '—' : Math.round(d.missing * 100) + '%'} · 다시 연결 ${d.reconnects}`; return s; }));
@@ -94,19 +96,38 @@ function profileSvg(plan, elapsed = null) {
   if (elapsed !== null) { const cx = (elapsed / total * 1000).toFixed(1); out += `<rect x="0" y="0" width="${cx}" height="100" fill="#000" opacity=".35"/><line x1="${cx}" x2="${cx}" y1="0" y2="100" stroke="#fff" stroke-width="3" vector-effect="non-scaling-stroke"/>`; }
   return out;
 }
-function renderSession(pos) {
-  $('session').hidden = !run; $('board').classList.toggle('in-session', !!run);
-  if (!run) return;
-  const st = pos.step;
-  $('s-step').textContent = `${pos.index + 1}/${run.plan.steps.length} ${st.label}`;
-  $('s-range').textContent = st.lo === null ? '자유' : `${st.lo}~${st.hi}%FTP`;
-  $('s-left').textContent = pos.paused ? `일시정지 ${mmss(pos.stepRemaining)}` : mmss(pos.stepRemaining);
-  $('s-name').textContent = `${run.plan.name}${run.group ? ` · ${run.group}만` : ''}`;
-  $('s-total').textContent = `${mmss(pos.elapsed)} / ${mmss(pos.total)}`;
-  $('s-next').textContent = pos.next ? `${pos.next.label}${pos.next.lo === null ? '' : ` ${pos.next.lo}~${pos.next.hi}%`}` : '끝';
-  $('s-pause').textContent = pos.paused ? '다시 시작' : '일시정지';
-  $('s-profile').innerHTML = profileSvg(run.plan, pos.elapsed);
+const sessionTag = e => `${e.run.group ?? '전체'} 세션`;
+function renderSessions(now) {
+  const box = $('sessions'); box.hidden = !room.entries.length; $('board').classList.toggle('in-session', room.entries.length > 0);
+  const keep = new Set(room.entries.map(e => String(e.id)));
+  for (const el of [...box.children]) if (!keep.has(el.dataset.id)) el.remove();
+  for (const e of room.entries) {
+    let el = box.querySelector(`[data-id="${e.id}"]`);
+    if (!el) {
+      el = document.createElement('section'); el.className = 'session'; el.dataset.id = e.id;
+      el.innerHTML = '<div class="now"><b class="s-group"></b> <b class="s-step"></b> <span class="s-range"></span> <span class="big s-left"></span></div><div class="meta"><span class="s-name"></span> · <span class="s-total"></span> · 다음 <span class="s-next"></span> · <span class="s-count"></span></div><svg class="profile" viewBox="0 0 1000 100" preserveAspectRatio="none" aria-hidden="true"></svg><div class="ctl"><button type="button" data-act="pause"></button><button type="button" data-act="stop">끝내기</button></div>';
+      box.append(el);
+    }
+    const pos = e.run.at(now), st = pos.step, n = settings.codes().filter(c => room.active(c) === e).length;
+    el.querySelector('.s-group').textContent = e.run.group ?? '전체';
+    el.querySelector('.s-step').textContent = `${pos.index + 1}/${e.run.plan.steps.length} ${st.label}`;
+    el.querySelector('.s-range').textContent = st.lo === null ? '자유' : `${st.lo}~${st.hi}%FTP`;
+    el.querySelector('.s-left').textContent = pos.paused ? `일시정지 ${mmss(pos.stepRemaining)}` : mmss(pos.stepRemaining);
+    el.querySelector('.s-name').textContent = e.run.plan.name;
+    el.querySelector('.s-total').textContent = `${mmss(pos.elapsed)} / ${mmss(pos.total)}`;
+    el.querySelector('.s-next').textContent = pos.next ? `${pos.next.label}${pos.next.lo === null ? '' : ` ${pos.next.lo}~${pos.next.hi}%`}` : '끝';
+    el.querySelector('.s-count').textContent = `${n}명`;
+    el.querySelector('[data-act="pause"]').textContent = pos.paused ? '다시 시작' : '일시정지';
+    el.querySelector('.profile').innerHTML = profileSvg(e.run.plan, pos.elapsed);
+  }
 }
+$('sessions').addEventListener('click', ev => {
+  const b = ev.target.closest('button[data-act]'); if (!b) return;
+  const e = room.get(Number(b.closest('.session').dataset.id)); if (!e) return; const now = performance.now();
+  if (b.dataset.act === 'pause') e.run.paused ? e.run.resume(now) : e.run.pause(now);
+  if (b.dataset.act === 'stop') finished(room.finish(e.id, now));
+  render();
+});
 
 // ── 세션 시작·끝 ──
 function selectedPlan() { return $('preset').value === 'custom' && customPlan ? customPlan : PRESETS.find(p => p.id === $('preset').value) ?? PRESETS[0]; }
@@ -117,13 +138,18 @@ function previewPlan() {
   const plan = selectedPlan();
   $('preview-source').textContent = `${mmss(totalSec(plan))}${plan.source ? ` · 출처: ${plan.source}` : ''}`;
   $('target-group').value = (plan.groups ?? []).join(',');
+  markBusy();
   $('preview').innerHTML = profileSvg(plan);
   $('preview-steps').replaceChildren(...plan.steps.map(s => { const li = document.createElement('li'); li.textContent = `${s.label} ${mmss(s.sec)}${s.lo === null ? ' · 자유' : ` · ${s.lo}~${s.hi}%FTP`}`; return li; }));
 }
-$('session-btn').addEventListener('click', () => {
-  if (run) { notice('세션이 진행 중입니다. 끝낸 뒤 새로 시작하세요.'); return; }
-  fillPresets(); previewPlan(); $('session-dialog').showModal();
-});
+/** 진행 중인 그룹과 겹치는 대상은 고를 수 없게 표시. */
+function markBusy() {
+  const busy = room.busyGroups();
+  for (const o of $('target-group').options) { const gs = o.value ? o.value.split(',') : ['전체']; o.disabled = busy.length > 0 && (busy.includes('전체') || gs.includes('전체') || gs.some(g => busy.includes(g))); }
+  $('busy-note').textContent = busy.length ? `진행 중: ${room.entries.map(e => `${e.run.group ?? '전체'}(${e.run.plan.name})`).join(' · ')} — 겹치지 않는 그룹만 시작할 수 있습니다` : '';
+}
+$('session-btn').addEventListener('click', () => { fillPresets(); previewPlan(); $('session-dialog').showModal(); });
+$('target-group').addEventListener('change', markBusy);
 $('preset').addEventListener('change', previewPlan);
 $('plan-file').addEventListener('change', async e => {
   const f = e.target.files?.[0]; if (!f) return;
@@ -133,28 +159,58 @@ $('plan-file').addEventListener('change', async e => {
 });
 $('start-session').addEventListener('click', () => {
   audio ??= new AudioContext(); keepAwake();
-  const now = performance.now();
-  run = new SessionRun(selectedPlan(), { group: $('target-group').value || null }).start(now);
-  recorder = new Recorder(run, settings, { mock: !!mock });
+  try { room.start(selectedPlan(), $('target-group').value || null, performance.now(), { mock: !!mock }); notice(mock ? noticeMock : ''); }
+  catch (e) { notice(e.message); return; }
   mock?.stepRiders();
-  for (const tr of trail.values()) tr.length = 0;
   render();
 });
-$('s-pause').addEventListener('click', () => { if (!run) return; const now = performance.now(); run.paused ? run.resume(now) : run.pause(now); render(); });
-$('s-stop').addEventListener('click', () => { if (run) finishSession(performance.now()); });
 
-function finishSession(now) {
-  run.stop(now); run.finished = true;
-  const summary = recorder.summary(now);
+/** 세션 하나가 끝남(시간 다 됨 또는 끝내기): 요약 저장 + 결과 창. 여러 개가 겹치면 차례로 보여 준다. */
+const resultQueue = [];
+function finished(summary) {
+  if (!summary) return;
   try { if (summary.athletes.length) saveToHistory(localStorage, summary); } catch (e) { notice(`기록 저장 못 함: ${e.message}`); }
-  run = null; recorder = null; beep();
-  showResult(summary); render();
+  beep(); resultQueue.push(summary); if (!$('result').open) showResult(resultQueue.shift());
 }
+$('result').addEventListener('close', () => { if (resultQueue.length) setTimeout(() => showResult(resultQueue.shift()), 0); });
+function endAll() { const now = performance.now(); for (const e of [...room.entries]) finished(room.finish(e.id, now)); }
+
+// ── 선수 한 명: 먼저 끝내기 · 다시 넣기 · 빼기 · 다른 세션 합류(타일을 누르면 창) ──
+let athleteCode = null;
+function openAthlete(code) {
+  athleteCode = code; const p = room.place(code), box = $('a-actions');
+  $('a-title').textContent = `${code}${settings.group(code) ? ` · ${settings.group(code)}` : ''}`;
+  $('a-state').textContent = !p.entry ? '지금 속한 세션이 없습니다' : `${sessionTag(p.entry)} 「${p.entry.run.plan.name}」 — ${p.state === 'ended' ? '먼저 끝냄(기록 멈춤)' : '진행 중'}`;
+  const btn = (label, act, id = '') => `<button type="button" data-act="${act}" data-id="${id}">${esc(label)}</button>`;
+  const others = room.entries.filter(e => e !== p.entry);
+  box.innerHTML = [
+    p.state === 'active' ? btn('먼저 끝내기(기록은 남김)', 'end') : '',
+    p.state === 'ended' ? btn('다시 넣기(이어서 기록)', 'resume') : '',
+    p.entry ? btn('이 세션에서 빼기(이 세션 기록 지움)', 'remove') : '',
+    ...others.map(e => btn(`${sessionTag(e)} 「${e.run.plan.name}」에 합류`, 'join', e.id)),
+  ].filter(Boolean).join('') || '<p class="muted">진행 중인 세션이 없습니다. 「훈련 세션」으로 시작하세요.</p>';
+  $('athlete').showModal();
+}
+$('board').addEventListener('click', ev => {
+  if ($('pair').getAttribute('aria-pressed') === 'true') return;
+  const el = ev.target.closest('.tile'); if (!el || !room.entries.length) return;
+  openAthlete(el.querySelector('.code').textContent);
+});
+$('a-actions').addEventListener('click', ev => {
+  const b = ev.target.closest('button[data-act]'); if (!b || !athleteCode) return; const now = performance.now();
+  try {
+    if (b.dataset.act === 'end') room.endAthlete(athleteCode, now);
+    if (b.dataset.act === 'resume') room.resumeAthlete(athleteCode);
+    if (b.dataset.act === 'remove') room.removeAthlete(athleteCode);
+    if (b.dataset.act === 'join') { room.join(athleteCode, Number(b.dataset.id), now); mock?.stepRiders(); }
+    $('athlete').close(); render();
+  } catch (e) { notice(e.message); }
+});
 
 // ── 결과 ──
 function resultTable(s) {
-  const head = `<tr><th>선수</th><th>그룹</th><th>FTP</th><th>평균W</th><th>최대W</th><th>목표 안</th><th>평균 심박</th><th>최대 심박</th><th>평균 rpm</th><th>kJ</th><th>기록률</th>${s.plan.steps.map((st, i) => `<th title="${esc(st.label)}">${i + 1}. ${esc(st.label)}</th>`).join('')}</tr>`;
-  const rows = s.athletes.map(a => `<tr><td>${esc(a.code)}</td><td>${esc(a.group ?? '—')}</td><td>${dash(a.ftp)}</td><td>${dash(a.avgPower)}</td><td>${dash(a.maxPower)}</td><td>${a.inTarget === null ? '—' : a.inTarget + '%'}</td><td>${dash(a.avgHr)}</td><td>${dash(a.maxHr)}</td><td>${dash(a.avgCadence)}</td><td>${dash(a.kj)}</td><td>${a.recorded}%</td>${a.steps.map(x => `<td>${dash(x.avgPower)}${x.inTarget === null ? '' : ` <small>${x.inTarget}%</small>`}</td>`).join('')}</tr>`).join('');
+  const head = `<tr><th>선수</th><th>그룹</th><th>참여</th><th>FTP</th><th>평균W</th><th>최대W</th><th>목표 안</th><th>평균 심박</th><th>최대 심박</th><th>평균 rpm</th><th>kJ</th><th>기록률</th>${s.plan.steps.map((st, i) => `<th title="${esc(st.label)}">${i + 1}. ${esc(st.label)}</th>`).join('')}</tr>`;
+  const rows = s.athletes.map(a => `<tr><td>${esc(a.code)}</td><td>${esc(a.group ?? '—')}</td><td>${esc(a.status ?? '함께')}${a.fromSec === null || a.fromSec === undefined ? '' : ` <small>${mmss(a.fromSec)}–${mmss(a.toSec)}</small>`}</td><td>${dash(a.ftp)}</td><td>${dash(a.avgPower)}</td><td>${dash(a.maxPower)}</td><td>${a.inTarget === null ? '—' : a.inTarget + '%'}</td><td>${dash(a.avgHr)}</td><td>${dash(a.maxHr)}</td><td>${dash(a.avgCadence)}</td><td>${dash(a.kj)}</td><td>${a.recorded}%</td>${a.steps.map(x => `<td>${dash(x.avgPower)}${x.inTarget === null ? '' : ` <small>${x.inTarget}%</small>`}</td>`).join('')}</tr>`).join('');
   return head + rows;
 }
 function showResult(s) {
@@ -232,17 +288,18 @@ navigator.usb?.addEventListener('connect', e => { const t = [...transports.value
 navigator.usb?.addEventListener('disconnect', e => { const t = transports.get(e.device); if (t) { hub.setDongleStatus(t.name, '끊김'); transports.delete(e.device); } });
 knownDongles().then(list => { if (list.length && parseNetworkKey(localStorage.getItem(KEY_STORE))) list.forEach(openDongle); });
 
+const noticeMock = '모의 센서로 보는 중입니다(실제 센서 아님). 「훈련 세션」으로 그룹별 세션을 시험할 수 있고, 세션 중 타일을 누르면 선수별로 끝내기·합류를 할 수 있습니다.';
 // ── 모의 센서: 동글 없이 화면·경보·세션 확인. 진짜 설정은 건드리지 않는 별도 메모리 설정 ──
 // 모의 선수: P01~04 중E · P05~08 중S · P09~12 고E · P13~16 고S, FTP 는 진짜 설정 값(없으면 그룹별 가짜 값).
 function startMock() {
-  if (run) finishSession(performance.now());
+  endAll();
   const n = settings.data.athletes, real = settings;
   settings = new Settings(memory()); settings.setAthletes(n);
   for (const [i, c] of real.codes().entries()) {
     const g = real.group(c) ?? GROUPS[Math.min(3, Math.floor(i / 4))];
     settings.setGroup(c, g); settings.setFtp(c, real.ftp(c) ?? (g.startsWith('중') ? 190 : 250) + (i % 4) * 15);
   }
-  hub = new Hub(settings);
+  hub = new Hub(settings); room = new Room(settings);
   const field = MockField.room(n), dongles = ['A', 'B', 'C'].map((name, i) => ({ d: new MockDongle(name, { seed: 5 + i, drop: 0.03 }), p: new Parser() }));
   field.sensors.forEach((s, i) => settings.assign(sensorKey(s), 'P' + String(Math.floor(i / 2) + 1).padStart(2, '0'), s.deviceType === 120 ? 'hr' : 'power'));
   const riders = settings.codes().map((c, i) => ({ code: c, rider: new MockRider(field.sensors[i * 2], field.sensors[i * 2 + 1], 7919 * (i + 1)) }));
@@ -254,20 +311,19 @@ function startMock() {
   }, 50) };
   // 세션 중이면 모의 선수가 1초마다 목표를 따라 밟는다(선수마다 실력 배율이 달라 목표 안·밖이 섞여 보임).
   mock.stepRiders = () => {
-    if (!run || run.paused) return;
-    const pos = run.at(performance.now());
-    for (const { code, rider } of riders) if (run.includes(settings.group(code))) rider.step(targetWatts(pos.step, settings.ftp(code)), settings.ftp(code));
+    const now = performance.now();
+    for (const { code, rider } of riders) { const e = room.active(code); if (e && !e.run.paused) { const ftp = settings.ftp(code); rider.step(targetWatts(e.run.at(now).step, ftp) ?? { low: Math.round(ftp * 0.5), high: Math.round(ftp * 0.65) }, ftp); } }   // 자유 구간은 가볍게(50~65%)
   };
   mock.follow = setInterval(mock.stepRiders, 1000);
   // 시험용: 20초마다 선수 1명 센서를 4초 멈춰 끊김 경보를 보여 준다.
   mock.chaos = setInterval(() => { const s = field.sensors[Math.floor(Math.random() * field.sensors.length)]; s.silent = true; setTimeout(() => { s.silent = false; }, 4000); }, 20000);
-  $('mock').setAttribute('aria-pressed', 'true'); notice('모의 센서로 보는 중입니다(실제 센서 아님). 「훈련 세션」으로 목표 비교를 시험할 수 있습니다.');
+  $('mock').setAttribute('aria-pressed', 'true'); notice(noticeMock);
   buildBoard();
 }
 function stopMock() {
   if (!mock) return;
-  if (run) finishSession(performance.now());
-  clearInterval(mock.timer); clearInterval(mock.chaos); clearInterval(mock.follow); settings = mock.real; hub = new Hub(settings); mock = null;
+  endAll();
+  clearInterval(mock.timer); clearInterval(mock.chaos); clearInterval(mock.follow); settings = mock.real; hub = new Hub(settings); room = new Room(settings); mock = null;
   $('mock').setAttribute('aria-pressed', 'false'); notice(''); buildBoard();
 }
 $('mock').addEventListener('click', () => { audio ??= new AudioContext(); mock ? stopMock() : startMock(); });

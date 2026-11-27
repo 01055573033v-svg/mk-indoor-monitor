@@ -8,7 +8,7 @@
 </head>
 <body>
   <header class="bar">
-    <strong>실내 로라 모니터 <small>2단계 · 세션 요약만 이 크롬에 저장</small></strong>
+    <strong>실내 로라 모니터 <small>그룹별 세션 · 요약만 이 크롬에 저장</small></strong>
     <div class="actions">
       <button id="connect" type="button">동글 연결</button>
       <button id="mock" type="button">모의 센서</button>
@@ -22,12 +22,7 @@
   </header>
   <p id="notice" class="notice" role="status" hidden></p>
   <section id="dongles" class="dongles" aria-label="동글 상태"></section>
-  <section id="session" class="session" hidden aria-label="훈련 세션 진행">
-    <div class="now"><b id="s-step"></b> <span id="s-range"></span> <span class="big" id="s-left"></span></div>
-    <div class="meta"><span id="s-name"></span> · <span id="s-total"></span> · 다음 <span id="s-next"></span></div>
-    <svg id="s-profile" class="profile" viewBox="0 0 1000 100" preserveAspectRatio="none" aria-hidden="true"></svg>
-    <div class="ctl"><button id="s-pause" type="button">일시정지</button><button id="s-stop" type="button">끝내기</button></div>
-  </section>
+  <div id="sessions" class="sessions" hidden aria-label="진행 중인 세션(그룹별)"></div>
   <main id="board" class="board size-2" aria-live="off"></main>
   <section id="unpaired" class="panel" hidden aria-label="짝 없는 센서"></section>
   <dialog id="settings">
@@ -43,6 +38,7 @@
   <dialog id="session-dialog">
     <form method="dialog">
       <h2>훈련 세션 시작</h2>
+      <p id="busy-note" class="muted"></p>
       <label>세션 <select id="preset"></select></label>
       <label>대상 그룹 <select id="target-group"><option value="">전체</option><option value="중E,중S">중등 E·S</option><option value="고E,고S">고등 E·S</option><option>중E</option><option>중S</option><option>고E</option><option>고S</option></select></label>
       <label>세션 파일(JSON) <input id="plan-file" type="file" accept=".json,application/json"></label>
@@ -50,6 +46,14 @@
       <svg id="preview" class="profile" viewBox="0 0 1000 100" preserveAspectRatio="none" aria-hidden="true"></svg>
       <ol id="preview-steps" class="steps"></ol>
       <menu><button value="start" id="start-session">시작</button><button value="cancel" formnovalidate>닫기</button></menu>
+    </form>
+  </dialog>
+  <dialog id="athlete">
+    <form method="dialog">
+      <h2 id="a-title"></h2>
+      <p id="a-state" class="muted"></p>
+      <div id="a-actions" class="stack"></div>
+      <menu><button value="close">닫기</button></menu>
     </form>
   </dialog>
   <dialog id="result" class="wide">
