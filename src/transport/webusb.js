@@ -1,6 +1,7 @@
 // WebUSB 전송(설계안 §3 권고 경로). 크롬에서 동글을 직접 열어 스캔에 넣고, 받은 방송을 Hub 형식으로 넘긴다.
 // 실물 동글로 확인하기 전 코드다 — 선테스트 1~4(인식·엔드포인트·스캔 진입·확장 메시지)에서 처음 검증된다.
-// 전송 계층 공통 형식: start({ onPacket(t, broadcast), onStatus(text) }) / stop(). 2단계 브리지(WebSocket)도 같은 형식을 따른다.
+// 전송 계층 공통 형식: start({ onPacket(t, broadcast), onStatus(text), onClose(reason) }) / stop(). 2단계 브리지(WebSocket)도 같은 형식을 따른다.
+// onClose: 우리가 stop 하지 않았는데 끊겼을 때 1번(읽기 실패·USB 빠짐). 자동 재연결(reconnect.js)이 이걸 듣는다.
 import { Parser, MSG } from '../ant/message.js';
 import { scanSetup, parseBroadcast, channelResponse } from '../ant/scan.js';
 
@@ -39,8 +40,8 @@ export class WebUsbTransport {
   /** 진단 한 줄: name · ok · ms(걸린 시간) · note. */
   mark(name, ok, t0, note = '') { this.diag.steps.push({ name, ok, ms: Math.round(this.now() - t0), note }); return ok; }
 
-  async start({ onPacket, onStatus }) {
-    this.onPacket = onPacket; this.onStatus = onStatus ?? (() => {});
+  async start({ onPacket, onStatus, onClose }) {
+    this.onPacket = onPacket; this.onStatus = onStatus ?? (() => {}); this.onClose = onClose ?? (() => {});
     const d = this.device, fail = (msg) => { this.diag.error = msg; throw new Error(msg); };
     this.diag.startedAt = this.now();
     this.onStatus('여는 중');
@@ -86,7 +87,7 @@ export class WebUsbTransport {
     while (this.running) {
       let r;
       try { r = await this.device.transferIn(this.ep.input, this.ep.packetSize); }
-      catch (e) { if (this.running) { this.running = false; this.onStatus('끊김'); } return; }
+      catch (e) { if (this.running) { this.running = false; this.onStatus('끊김'); this.lost(e.message); } return; }
       if (r.status !== 'ok' || !r.data) continue;
       const t = this.now();
       for (const msg of this.parser.push(new Uint8Array(r.data.buffer, r.data.byteOffset, r.data.byteLength))) {
@@ -102,8 +103,11 @@ export class WebUsbTransport {
     }
   }
 
+  /** 끊김 알림은 한 번만(읽기 실패와 USB 빠짐 이벤트가 둘 다 와도). */
+  lost(reason) { if (this.closed) return; this.closed = true; this.running = false; this.onClose?.(reason || '끊김'); }
+
   async stop() {
-    this.running = false;
+    this.closed = true; this.running = false;
     try { await this.device.close(); } catch { /* 이미 빠짐 */ }
     this.onStatus('멈춤');
   }

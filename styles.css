@@ -87,3 +87,18 @@ dialog .row { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
 .guide { line-height: 1.7; margin: .4rem 0 .8rem; }
 .scroll table.diag td, .scroll table.diag th { text-align: left; white-space: normal; }
 .diag tr[data-state="ok"] td:first-child { color: var(--ok); } .diag tr[data-state="fail"] td:first-child { color: var(--lost); } .diag tr[data-state="wait"] td:first-child { color: var(--late); }
+
+/* 3단계(11-27): 동글 끊김·재연결 띠, 동글 상태 색, 구간 안내 띠, 목표 이탈 타일 */
+.link-banner { margin: .5rem 1rem; padding: .6rem .9rem; border-radius: .5rem; background: #4a1212; border: 2px solid var(--lost); font-weight: 700; font-size: clamp(1rem, 1.4vw, 2rem); }
+.link-banner[data-state="retrying"] { background: #3b2a06; border-color: var(--late); }
+.dongles span[data-state="up"]::before { content: "● "; color: var(--ok); }
+.dongles span[data-state="retrying"] { color: var(--late); font-weight: 700; }
+.dongles span[data-state="retrying"]::before { content: "◌ "; }
+.dongles span[data-state="failed"] { color: var(--lost); font-weight: 700; }
+.dongles span[data-state="failed"]::before { content: "✕ "; }
+.cue { margin: .4rem 1rem; padding: .5rem .9rem; border-radius: .5rem; background: #102a43; border-left: .4rem solid #60a5fa; font-weight: 800; font-size: clamp(1.1rem, 1.8vw, 2.6rem); }
+.cue[data-kind="change"] { background: #0f3d2a; border-left-color: var(--ok); }
+.cue[data-kind="off"] { background: #3b2a06; border-left-color: var(--late); }
+.tile.off-alert { box-shadow: inset 0 0 0 .3rem var(--late); }
+.result-team td { font-weight: 800; border-top: 2px solid var(--line); }
+.warn { color: var(--late); font-weight: 800; }

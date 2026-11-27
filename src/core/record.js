@@ -8,6 +8,9 @@ export const HISTORY_MAX = 30;
 
 const avg = xs => xs.length ? Math.round(xs.reduce((a, b) => a + b, 0) / xs.length) : null;
 const max = xs => xs.length ? Math.max(...xs) : null;
+const pct = (part, whole) => whole ? Math.round(part / whole * 100) : null;
+/** 파워가 연속으로 안 들어온 가장 긴 초(센서 끊김 확인용). */
+function longestGap(rows) { let run = 0, best = 0; for (const r of rows) { run = r.p === null ? run + 1 : 0; best = Math.max(best, run); } return best; }
 
 export class Recorder {
   constructor(run, settings, { mock = false, wallStart = Date.now() } = {}) {
@@ -48,17 +51,33 @@ export class Recorder {
         avgHr: avg(rows.filter(r => r.hr !== null).map(r => r.hr)), maxHr: max(rows.filter(r => r.hr !== null).map(r => r.hr)),
         avgCadence: avg(rows.filter(r => r.cad !== null && r.cad > 0).map(r => r.cad)),
         inTarget: judged.length ? Math.round(judged.filter(r => r.cmp === 'in').length / judged.length * 100) : null,
+        // 3단계 요약(11-27): 목표 아래·위 비율, 가장 긴 끊김, 목표 안 비율이 가장 낮은 구간(코치가 먼저 볼 곳).
+        below: pct(judged.filter(r => r.cmp === 'low').length, judged.length), above: pct(judged.filter(r => r.cmp === 'high').length, judged.length),
+        longestGapSec: longestGap(rows),
         steps: plan.steps.map((s, i) => {
           const rs = rows.filter(r => r.step === i), sp = rs.filter(r => r.p !== null).map(r => r.p), sj = rs.filter(r => r.cmp !== null);
           return { avgPower: avg(sp), inTarget: sj.length ? Math.round(sj.filter(r => r.cmp === 'in').length / sj.length * 100) : null };
         }),
       };
     });
+    for (const a of athletes) {
+      // 10초 넘게 판정된 구간 중 목표 안 비율이 가장 낮은 곳(같으면 앞 구간).
+      let worst = null;
+      a.steps.forEach((st, i) => { const n = (this.rows.get(a.code) ?? []).filter(r => r.step === i && r.cmp !== null).length;
+        if (st.inTarget !== null && n >= 10 && (worst === null || st.inTarget < worst.inTarget)) worst = { index: i, label: plan.steps[i].label, inTarget: st.inTarget }; });
+      a.worstStep = worst;
+    }
+    const mean = key => avg(athletes.map(a => a[key]).filter(v => v !== null && v !== undefined));
+    const team = athletes.length ? {
+      athletes: athletes.length, avgPower: mean('avgPower'), inTarget: mean('inTarget'), below: mean('below'), above: mean('above'), avgHr: mean('avgHr'),
+      steps: plan.steps.map((_, i) => ({ inTarget: avg(athletes.map(a => a.steps[i].inTarget).filter(v => v !== null)) })),
+      gaps: athletes.filter(a => a.longestGapSec >= 10).map(a => a.code),   // 10초 넘게 끊긴 선수(센서 확인)
+    } : null;
     return {
       version: 1, mock: this.mock, startedAt: new Date(this.wallStart).toISOString(), seconds,
       complete: seconds >= this.run.total, group: this.run.group,
       plan: { id: plan.id, name: plan.name, steps: plan.steps.map(s => ({ label: s.label, sec: s.sec, lo: s.lo, hi: s.hi })) },
-      athletes,
+      athletes, team,
     };
   }
 }
@@ -79,8 +98,8 @@ export function removeFromHistory(storage, startedAt) {
 
 /** 내려받기용 CSV(선수 1줄). 엑셀이 한글을 읽게 BOM 을 붙이는 건 화면 쪽에서. */
 export function toCsv(s) {
-  const head = ['세션', '시작', '모의', '선수', '그룹', '참여', '기록 시작(초)', '기록 끝(초)', 'FTP', '평균W', '최대W', 'kJ', '목표안%', '평균심박', '최대심박', '평균rpm', '기록률%', ...s.plan.steps.map((st, i) => `${i + 1}.${st.label} 평균W`)];
+  const head = ['세션', '시작', '모의', '선수', '그룹', '참여', '기록 시작(초)', '기록 끝(초)', 'FTP', '평균W', '최대W', 'kJ', '목표안%', '목표아래%', '목표위%', '최장끊김(초)', '가장 낮은 구간', '평균심박', '최대심박', '평균rpm', '기록률%', ...s.plan.steps.map((st, i) => `${i + 1}.${st.label} 평균W`)];
   const q = v => v === null || v === undefined ? '' : /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v);
-  const rows = s.athletes.map(a => [s.plan.name, s.startedAt, s.mock ? '예' : '', a.code, a.group ?? '', a.status ?? '', a.fromSec, a.toSec, a.ftp ?? '', a.avgPower, a.maxPower, a.kj, a.inTarget, a.avgHr, a.maxHr, a.avgCadence, a.recorded, ...a.steps.map(x => x.avgPower)]);
+  const rows = s.athletes.map(a => [s.plan.name, s.startedAt, s.mock ? '예' : '', a.code, a.group ?? '', a.status ?? '', a.fromSec, a.toSec, a.ftp ?? '', a.avgPower, a.maxPower, a.kj, a.inTarget, a.below, a.above, a.longestGapSec, a.worstStep ? `${a.worstStep.index + 1}.${a.worstStep.label} ${a.worstStep.inTarget}%` : '', a.avgHr, a.maxHr, a.avgCadence, a.recorded, ...a.steps.map(x => x.avgPower)]);
   return [head, ...rows].map(r => r.map(q).join(',')).join('\n');
 }

@@ -64,6 +64,24 @@ test('기록 요약: 초마다 1번, 그룹 밖 선수 제외, 평균·최대·�
   assert.equal(b.inTarget, 0); assert.equal(b.recorded, 99); assert.equal(b.kj, Math.round(100 * 149 / 1000));
   assert.equal(a.avgHr, 150); assert.equal(a.avgCadence, 90);
   const csv = toCsv(sum).split('\n'); assert.equal(csv.length, 3); assert.match(csv[0], /^세션,시작,모의,선수,그룹,참여,기록 시작\(초\),기록 끝\(초\),FTP,평균W/); assert.match(csv[1], /^시험,2026-11-27T01:00:00.000Z,,P01,고E,함께,0,150,200,/);
+  // 3단계 요약(11-27): 목표 아래·위, 가장 긴 끊김, 가장 낮은 구간, 팀 평균
+  assert.equal(a.below, 0); assert.equal(a.above, 0); assert.equal(b.below, 100); assert.equal(b.above, 0);
+  assert.equal(a.longestGapSec, 0); assert.equal(b.longestGapSec, 1);
+  assert.equal(a.worstStep.inTarget, 100); assert.equal(a.worstStep.index, 0, '같으면 앞 구간');
+  assert.deepEqual(b.worstStep, { index: 0, label: plan.steps[0].label, inTarget: 0 });
+  assert.deepEqual(sum.team, { athletes: 2, avgPower: Math.round((a.avgPower + b.avgPower) / 2), inTarget: 50, below: 50, above: 0, avgHr: 150, steps: [{ inTarget: 50 }, { inTarget: null }, { inTarget: 50 }], gaps: [] });
+  assert.match(csv[0], /목표안%,목표아래%,목표위%,최장끊김\(초\),가장 낮은 구간,평균심박/);
+  assert.match(csv[2], /,0,100,0,1,1\.[^,]+ 0%,/);
+});
+
+test('기록 요약: 10초 넘게 파워가 끊긴 선수는 팀 줄에 이름이 남고, 짧게 판정된 구간(10초 미만)은 「가장 낮은 구간」에서 뺀다', () => {
+  const s = new Settings(memory()); s.setAthletes(1); s.setFtp('P01', 200); s.setGroup('P01', '고E');
+  const short = { id: 's', name: '짧은', steps: [{ label: '긴', sec: 60, lo: 50, hi: 60 }, { label: '짧음', sec: 5, lo: 100, hi: 110 }] };
+  const run = new SessionRun(short, { group: '고E' }).start(0), rec = new Recorder(run, s);
+  for (let sec = 0; sec < 65; sec++) rec.tick(sec * 1000, [{ code: 'P01', power: sec >= 20 && sec < 32 ? null : 110, hr: null, cadence: null }]);
+  const [a] = rec.summary(65_000).athletes;
+  assert.equal(a.longestGapSec, 12); assert.deepEqual(rec.summary(65_000).team.gaps, ['P01']);
+  assert.equal(a.worstStep.label, '긴', '5초 구간(0%)은 판정이 짧아 빼고 「긴」을 고른다');
 });
 
 test('기록 저장: 최근 30개, 같은 시작 시각은 덮음, 지우기, 형식 틀린 것·P코드 아닌 것은 버림', () => {

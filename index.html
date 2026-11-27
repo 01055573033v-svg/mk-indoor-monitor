@@ -18,11 +18,14 @@
       <button id="pair" type="button" aria-pressed="false">센서 짝 맞추기</button>
       <button id="settings-btn" type="button">설정</button>
       <button id="size" type="button">타일 크기</button>
+      <button id="mute" type="button" aria-pressed="false">알림음 끄기</button>
       <button id="full" type="button">전체 화면</button>
     </div>
   </header>
   <p id="notice" class="notice" role="status" hidden></p>
+  <p id="link-banner" class="link-banner" role="alert" hidden></p>
   <section id="dongles" class="dongles" aria-label="동글 상태"></section>
+  <p id="cue" class="cue" role="status" aria-live="polite" hidden></p>
   <div id="sessions" class="sessions" hidden aria-label="진행 중인 세션(그룹별)"></div>
   <main id="board" class="board size-2" aria-live="off"></main>
   <section id="unpaired" class="panel" hidden aria-label="짝 없는 센서"></section>

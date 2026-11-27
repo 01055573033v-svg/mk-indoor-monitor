@@ -5,6 +5,8 @@ import { Settings, GROUPS } from './core/settings.js';
 import { parseNetworkKey, sensorKey, parseBroadcast } from './ant/scan.js';
 import { Parser } from './ant/message.js';
 import { WebUsbTransport, pickDongle, knownDongles } from './transport/webusb.js';
+import { DongleLink, matchReplug } from './transport/reconnect.js';
+import { Cues } from './core/cues.js';
 import { MockField, MockDongle, MockRider } from './transport/mock.js';
 import { PRESETS, checkPlan, totalSec, targetWatts, compare, mmss } from './core/session.js';
 import { Room } from './core/room.js';
@@ -18,7 +20,8 @@ const KEY_STORE = 'mk-indoor-monitor.netkey';
 const NAMES = ['A', 'B', 'C', 'D'];
 let settings = new Settings(localStorage), hub = new Hub(settings), mock = null, size = 2;
 let room = new Room(settings), customPlan = null, lastResult = null;   // room: 그룹별 세션들(3단계)
-const transports = new Map(), failed = new Map();   // failed: 열다 실패한 동글(이름 → 진단 기록, 연결 진단 화면용)
+const links = new Map(), failed = new Map();   // links: 동글 이름 → DongleLink(자동 재연결, 3단계) · failed: 처음 열다 실패한 동글(이름 → 전송, 연결 진단 화면용)
+let cues = new Cues(), muted = false;   // 구간 안내·목표 이탈 알림(3단계 골격)
 const memory = () => { const m = new Map(); return { getItem: k => m.get(k) ?? null, setItem: (k, v) => m.set(k, v) }; };
 const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const dash = v => v === null || v === undefined ? '—' : v;
@@ -50,13 +53,14 @@ function sparkSvg(points) {
 }
 
 function render() {
-  const now = performance.now(), view = hub.snapshot(now);
+  const now = performance.now(), view = hub.snapshot(now), judged = [];
   for (const s of room.tick(now, view.tiles)) finished(s);
   for (const t of view.tiles) {
     const el = tiles.get(t.code); if (!el) continue;
     const group = settings.group(t.code), ftp = settings.ftp(t.code);
     const place = room.place(t.code), entry = place.state === 'active' ? place.entry : null, pos = entry ? entry.run.at(now) : null;
     const target = pos ? targetWatts(pos.step, ftp) : null, cmp = compare(t.power, target);
+    judged.push({ code: t.code, sessionId: entry?.id ?? null, cmp });
     el.dataset.level = t.level;
     el.dataset.cmp = cmp?.state ?? '';
     el.classList.toggle('hidden', t.level === LEVELS.NONE && $('pair').getAttribute('aria-pressed') !== 'true' && hideEmpty);
@@ -79,12 +83,41 @@ function render() {
     el.querySelector('.spark').innerHTML = sparkSvg(tr);
   }
   renderSessions(now);
-  if (view.alerts.length) beep();
-  $('dongles').replaceChildren(...view.dongles.map(d => { const s = document.createElement('span');
-    s.textContent = `동글 ${d.name}: ${d.status} · 센서 ${d.sensors} · 초당 ${d.perSecond ?? '—'}건 · 빠짐 ${d.missing === null ? '—' : Math.round(d.missing * 100) + '%'} · 다시 연결 ${d.reconnects}`; return s; }));
+  if (view.alerts.length) beep('lost');
+  renderCues(now, judged);
+  renderLinks(now);
+  $('dongles').replaceChildren(...view.dongles.map(d => { const s = document.createElement('span'), link = links.get(d.name), v = link?.view(now);
+    s.dataset.state = v?.state ?? (mock ? 'up' : '');
+    s.textContent = `동글 ${d.name}: ${v ? v.label : d.status}${v?.downFor != null && v.state !== 'up' ? ` · 끊긴 지 ${v.downFor}초` : ''} · 센서 ${d.sensors} · 초당 ${d.perSecond ?? '—'}건 · 빠짐 ${d.missing === null ? '—' : Math.round(d.missing * 100) + '%'} · 다시 연결 ${v ? v.reconnects : d.reconnects}`; return s; }));
   renderUnpaired(view.unpaired);
 }
 let hideEmpty = false;
+
+// ── 3단계: 구간 안내 · 목표 이탈 알림(띠 + 소리). 이탈 타일은 노란 테두리 ──
+let cueUntil = 0;
+const CUE_RANK = { change: 3, soon: 2, off: 1 };
+function renderCues(now, judged) {
+  const sessions = room.entries.map(e => ({ id: e.id, group: e.run.group, pos: e.run.at(now) }));
+  const events = cues.step(now, sessions, judged), alerting = cues.alerting();
+  for (const [code, el] of tiles) el.classList.toggle('off-alert', alerting.has(code));
+  const box = $('cue');
+  if (events.length) {
+    const top = events.slice().sort((a, b) => CUE_RANK[b.kind] - CUE_RANK[a.kind])[0];
+    const offs = events.filter(e => e.kind === 'off');
+    box.dataset.kind = top.kind;
+    box.textContent = top.kind === 'off' ? offs.map(e => e.text).join(' · ') : top.text + (offs.length ? ` — ${offs.map(e => e.text).join(' · ')}` : '');
+    box.hidden = false; cueUntil = now + (top.kind === 'off' ? 6000 : 8000);
+    beep(top.kind);
+  } else if (now > cueUntil) box.hidden = true;
+}
+function renderLinks(now) {
+  const down = [...links.values()].map(l => l.view(now)).filter(v => v.state === 'retrying' || v.state === 'failed'), b = $('link-banner');
+  b.hidden = !down.length; if (!down.length) return;
+  b.dataset.state = down.some(v => v.state === 'failed') ? 'failed' : 'retrying';
+  b.textContent = down.map(v => v.state === 'failed'
+    ? `동글 ${v.name} 다시 연결 못 함 — USB를 뽑았다 다시 꽂거나 「연결 진단」을 보세요`
+    : `동글 ${v.name} 끊김 — ${v.label}${v.downFor === null ? '' : ` · ${v.downFor}초째`}. 다른 동글이 들리는 센서는 이어받습니다`).join(' / ');
+}
 
 // ── 세션 그래프(구간 막대 · 지금 위치) ──
 function profileSvg(plan, elapsed = null) {
@@ -175,7 +208,7 @@ const resultQueue = [];
 function finished(summary) {
   if (!summary) return;
   try { if (summary.athletes.length) saveToHistory(localStorage, summary); } catch (e) { notice(`기록 저장 못 함: ${e.message}`); }
-  beep(); resultQueue.push(summary); if (!$('result').open) showResult(resultQueue.shift());
+  beep('end'); resultQueue.push(summary); if (!$('result').open) showResult(resultQueue.shift());
 }
 $('result').addEventListener('close', () => { if (resultQueue.length) setTimeout(() => showResult(resultQueue.shift()), 0); });
 function endAll() { const now = performance.now(); for (const e of [...room.entries]) finished(room.finish(e.id, now)); }
@@ -214,14 +247,18 @@ $('a-actions').addEventListener('click', ev => {
 
 // ── 결과 ──
 function resultTable(s) {
-  const head = `<tr><th>선수</th><th>그룹</th><th>참여</th><th>FTP</th><th>평균W</th><th>최대W</th><th>목표 안</th><th>평균 심박</th><th>최대 심박</th><th>평균 rpm</th><th>kJ</th><th>기록률</th>${s.plan.steps.map((st, i) => `<th title="${esc(st.label)}">${i + 1}. ${esc(st.label)}</th>`).join('')}</tr>`;
-  const rows = s.athletes.map(a => `<tr><td>${esc(a.code)}</td><td>${esc(a.group ?? '—')}</td><td>${esc(a.status ?? '함께')}${a.fromSec === null || a.fromSec === undefined ? '' : ` <small>${mmss(a.fromSec)}–${mmss(a.toSec)}</small>`}</td><td>${dash(a.ftp)}</td><td>${dash(a.avgPower)}</td><td>${dash(a.maxPower)}</td><td>${a.inTarget === null ? '—' : a.inTarget + '%'}</td><td>${dash(a.avgHr)}</td><td>${dash(a.maxHr)}</td><td>${dash(a.avgCadence)}</td><td>${dash(a.kj)}</td><td>${a.recorded}%</td>${a.steps.map(x => `<td>${dash(x.avgPower)}${x.inTarget === null ? '' : ` <small>${x.inTarget}%</small>`}</td>`).join('')}</tr>`).join('');
-  return head + rows;
+  // 3단계 요약(11-27): 목표 아래·위, 가장 긴 끊김, 가장 낮은 구간 + 맨 아래 팀 평균 줄. 예전 기록(이 칸이 없음)은 —.
+  const pc = v => v === null || v === undefined ? '—' : v + '%';
+  const head = `<tr><th>선수</th><th>그룹</th><th>참여</th><th>FTP</th><th>평균W</th><th>최대W</th><th>목표 안</th><th>아래</th><th>위</th><th>가장 낮은 구간</th><th>평균 심박</th><th>최대 심박</th><th>평균 rpm</th><th>kJ</th><th>기록률</th><th>최장 끊김</th>${s.plan.steps.map((st, i) => `<th title="${esc(st.label)}">${i + 1}. ${esc(st.label)}</th>`).join('')}</tr>`;
+  const rows = s.athletes.map(a => `<tr><td>${esc(a.code)}</td><td>${esc(a.group ?? '—')}</td><td>${esc(a.status ?? '함께')}${a.fromSec === null || a.fromSec === undefined ? '' : ` <small>${mmss(a.fromSec)}–${mmss(a.toSec)}</small>`}</td><td>${dash(a.ftp)}</td><td>${dash(a.avgPower)}</td><td>${dash(a.maxPower)}</td><td>${pc(a.inTarget)}</td><td>${pc(a.below)}</td><td>${pc(a.above)}</td><td>${a.worstStep ? `${a.worstStep.index + 1}. ${esc(a.worstStep.label)} <small>${a.worstStep.inTarget}%</small>` : '—'}</td><td>${dash(a.avgHr)}</td><td>${dash(a.maxHr)}</td><td>${dash(a.avgCadence)}</td><td>${dash(a.kj)}</td><td>${a.recorded}%</td><td${a.longestGapSec >= 10 ? ' class="warn"' : ''}>${a.longestGapSec === undefined ? '—' : `${a.longestGapSec}초`}</td>${a.steps.map(x => `<td>${dash(x.avgPower)}${x.inTarget === null ? '' : ` <small>${x.inTarget}%</small>`}</td>`).join('')}</tr>`).join('');
+  const t = s.team;
+  const team = t ? `<tr class="result-team"><td>팀 평균</td><td colspan="3">${t.athletes}명</td><td>${dash(t.avgPower)}</td><td></td><td>${pc(t.inTarget)}</td><td>${pc(t.below)}</td><td>${pc(t.above)}</td><td></td><td>${dash(t.avgHr)}</td><td colspan="5">${t.gaps.length ? `10초 넘게 끊김: ${t.gaps.map(esc).join('·')}` : ''}</td>${t.steps.map(x => `<td>${pc(x.inTarget)}</td>`).join('')}</tr>` : '';
+  return head + rows + team;
 }
 function showResult(s) {
   lastResult = s;
   $('r-title').textContent = `세션 결과 — ${s.plan.name}${s.mock ? ' (모의)' : ''}`;
-  $('r-meta').textContent = `${new Date(s.startedAt).toLocaleString('ko-KR')} 시작 · ${mmss(s.seconds)}${s.complete ? '' : ' (중간에 끝냄)'} · ${s.group ? s.group + '만' : '전체'} · 선수 ${s.athletes.length}명 · 이 크롬에 요약 저장됨`;
+  $('r-meta').textContent = `${new Date(s.startedAt).toLocaleString('ko-KR')} 시작 · ${mmss(s.seconds)}${s.complete ? '' : ' (중간에 끝냄)'} · ${s.group ? s.group + '만' : '전체'} · 선수 ${s.athletes.length}명${s.team ? ` · 팀 목표 안 ${s.team.inTarget ?? '—'}%` : ''} · 이 크롬에 요약 저장됨`;
   $('r-table').innerHTML = s.athletes.length ? resultTable(s) : '<tr><td>기록된 선수가 없습니다(센서 짝·대상 그룹을 확인하세요).</td></tr>';
   if (!$('result').open) $('result').showModal();
 }
@@ -269,28 +306,38 @@ $('unpaired').addEventListener('click', e => {
 
 // ── 소리: 끊김 경보 1번(같은 타일 5초 안 재알림 없음은 Hub 가 정함) · 세션 끝 ──
 let audio = null;
-function beep() {
-  try { audio ??= new AudioContext(); const o = audio.createOscillator(), g = audio.createGain(); o.frequency.value = 880; g.gain.value = 0.2; o.connect(g).connect(audio.destination); o.start(); o.stop(audio.currentTime + 0.25); } catch { /* 소리 못 냄 */ }
+// 소리 종류(3단계): lost 끊김 880Hz 1번 · change 구간 전환 660→990 · soon 10초 전 660 짧게 2번 · off 이탈 440 짧게 · end 세션 끝
+const TONES = { lost: [[880, 0, 0.25]], end: [[880, 0, 0.25], [660, 0.3, 0.4]], change: [[660, 0, 0.15], [990, 0.18, 0.35]], soon: [[660, 0, 0.1], [660, 0.2, 0.1]], off: [[440, 0, 0.18]] };
+function beep(kind = 'lost') {
+  if (muted && kind !== 'lost') return;   // 끊김 경보는 알림음을 꺼도 울린다
+  try {
+    audio ??= new AudioContext();
+    for (const [hz, at, len] of TONES[kind] ?? TONES.lost) { const o = audio.createOscillator(), g = audio.createGain(); o.frequency.value = hz; g.gain.value = 0.2; o.connect(g).connect(audio.destination); o.start(audio.currentTime + at); o.stop(audio.currentTime + at + len); }
+  } catch { /* 소리 못 냄 */ }
 }
+$('mute').addEventListener('click', e => { muted = !muted; e.currentTarget.setAttribute('aria-pressed', String(muted)); e.currentTarget.textContent = muted ? '알림음 켜기' : '알림음 끄기'; });
 async function keepAwake() { try { await navigator.wakeLock?.request('screen'); } catch { /* 지원 안 함 */ } }
 
 // ── 동글 ──
 async function openDongle(device) {
   const key = parseNetworkKey(localStorage.getItem(KEY_STORE));
   if (!key) { notice('설정에서 ANT+ 네트워크 키를 먼저 넣어 주세요.'); $('settings-btn').click(); return; }
-  const name = NAMES.find(n => ![...transports.values()].some(t => t.name === n)) ?? `D${transports.size + 1}`;
-  const t = new WebUsbTransport(device, { name, networkKey: key });
-  transports.set(device, t);
-  try { await t.start({ onPacket: (at, b) => hub.receive(name, at, b), onStatus: s => hub.setDongleStatus(name, s) }); notice(''); }
-  catch (e) { hub.setDongleStatus(name, '실패'); notice(`동글 ${name}: ${e.message} — 「연결 진단」에서 막힌 단계를 볼 수 있습니다`); transports.delete(device); failed.set(name, t); }
+  const name = NAMES.find(n => !links.has(n)) ?? `D${links.size + 1}`;
+  const link = new DongleLink({ name, device, makeTransport: d => new WebUsbTransport(d, { name, networkKey: key }), onPacket: (at, b) => hub.receive(name, at, b),
+    onChange: l => { const v = l.view(), d = hub.dongle(name); d.status = v.label; d.reconnects = v.reconnects; } });
+  links.set(name, link); failed.delete(name);
+  try { await link.connect(); notice(''); }
+  catch (e) { hub.setDongleStatus(name, '실패'); notice(`동글 ${name}: ${e.message} — 「연결 진단」에서 막힌 단계를 볼 수 있습니다`); links.delete(name); failed.set(name, link.transport); }
 }
+const linkOf = device => [...links.values()].find(l => l.device === device);
 $('connect').addEventListener('click', async () => {
   stopMock(); keepAwake(); audio ??= new AudioContext();
-  try { const device = await pickDongle(); if (!transports.has(device)) await openDongle(device); }
+  try { const device = await pickDongle(); if (!linkOf(device)) await openDongle(device); }
   catch (e) { if (e.name !== 'NotFoundError') notice(e.message); }
 });
-navigator.usb?.addEventListener('connect', e => { const t = [...transports.values()].find(x => x.device === e.device); if (!t) openDongle(e.device); });
-navigator.usb?.addEventListener('disconnect', e => { const t = transports.get(e.device); if (t) { hub.setDongleStatus(t.name, '끊김'); transports.delete(e.device); } });
+// 3단계 자동 재연결: 빠지면 그 동글 링크가 1·2·4·8·10초 간격으로 다시 열어 보고, 다시 꽂으면(크롬이 새 장치로 알림) 바로 다시 연다.
+navigator.usb?.addEventListener('connect', e => { if (linkOf(e.device)) return; const l = matchReplug([...links.values()], e.device); if (l) l.replug(e.device); else openDongle(e.device); });
+navigator.usb?.addEventListener('disconnect', e => linkOf(e.device)?.unplugged());
 knownDongles().then(list => { if (list.length && parseNetworkKey(localStorage.getItem(KEY_STORE))) list.forEach(openDongle); });
 
 const noticeMock = '모의 센서로 보는 중입니다(실제 센서 아님). 「훈련 세션」으로 그룹별 세션을 시험할 수 있고, 세션 중 타일을 누르면 선수별로 끝내기·합류를 할 수 있습니다.';
@@ -304,7 +351,7 @@ function startMock() {
     const g = real.group(c) ?? GROUPS[Math.min(3, Math.floor(i / 4))];
     settings.setGroup(c, g); settings.setFtp(c, real.ftp(c) ?? (g.startsWith('중') ? 190 : 250) + (i % 4) * 15);
   }
-  hub = new Hub(settings); room = new Room(settings);
+  hub = new Hub(settings); room = new Room(settings); cues = new Cues();
   const field = MockField.room(n), dongles = ['A', 'B', 'C'].map((name, i) => ({ d: new MockDongle(name, { seed: 5 + i, drop: 0.03 }), p: new Parser() }));
   field.sensors.forEach((s, i) => settings.assign(sensorKey(s), 'P' + String(Math.floor(i / 2) + 1).padStart(2, '0'), s.deviceType === 120 ? 'hr' : 'power'));
   const riders = settings.codes().map((c, i) => ({ code: c, rider: new MockRider(field.sensors[i * 2], field.sensors[i * 2 + 1], 7919 * (i + 1)) }));
@@ -328,7 +375,7 @@ function startMock() {
 function stopMock() {
   if (!mock) return;
   endAll();
-  clearInterval(mock.timer); clearInterval(mock.chaos); clearInterval(mock.follow); settings = mock.real; hub = new Hub(settings); room = new Room(settings); mock = null;
+  clearInterval(mock.timer); clearInterval(mock.chaos); clearInterval(mock.follow); settings = mock.real; hub = new Hub(settings); room = new Room(settings); cues = new Cues(); mock = null;
   $('mock').setAttribute('aria-pressed', 'false'); notice(''); buildBoard();
 }
 $('mock').addEventListener('click', () => { audio ??= new AudioContext(); mock ? stopMock() : startMock(); });
@@ -380,8 +427,8 @@ const STATE_MARK = { ok: '✓', fail: '✕', wait: '…' };
 async function drawDiag() {
   const known = (await knownDongles().catch(() => [])).length;
   const pre = preChecks({ usb: !!navigator.usb, secure: window.isSecureContext, key: !!parseNetworkKey(localStorage.getItem(KEY_STORE)), known });
-  const live = [...transports.values()].map(t => ({ name: t.name, rows: dongleRows(t.diag), sensors: t.diag.devices.size }));
-  const dead = [...failed].filter(([n]) => !live.some(d => d.name === n)).map(([name, t]) => ({ name: `${name} (실패)`, rows: dongleRows(t.diag), sensors: 0 }));
+  const live = [...links.values()].filter(l => l.transport).map(l => ({ name: l.state === 'up' ? l.name : `${l.name} (${l.view().label})`, rows: dongleRows(l.transport.diag), sensors: l.transport.diag.devices.size }));
+  const dead = [...failed].filter(([n]) => !links.has(n)).map(([name, t]) => ({ name: `${name} (실패)`, rows: dongleRows(t.diag), sensors: 0 }));
   const all = [...live, ...dead], v = verdict(pre, all);
   const table = (title, rows) => `<tr><th colspan="3">${esc(title)}</th></tr>${rows.map(r => `<tr data-state="${r.state}"><td>${STATE_MARK[r.state]} ${esc(r.label)}</td><td>${esc(r.detail)}</td><td class="muted">${esc(r.hint)}</td></tr>`).join('')}`;
   $('diag-verdict').textContent = v.text; $('diag-verdict').dataset.state = v.state;
