@@ -1,6 +1,7 @@
 // 2단계 시험: 세션 시계 · 목표 비교 · 기록 요약·저장 · 명단 파일 · 모의 방에서 목표 따라가기(실제 ANT 바이트 길 전체).
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { TEAM_SESSIONS } from '../src/core/team-sessions.js';
 import { PRESETS, checkPlan, totalSec, targetWatts, compare, SessionRun, mmss } from '../src/core/session.js';
 import { Recorder, loadHistory, saveToHistory, removeFromHistory, toCsv, HISTORY_MAX } from '../src/core/record.js';
 import { parseRoster, applyRoster, exportRoster } from '../src/core/roster.js';
@@ -40,8 +41,7 @@ test('세션 파일 검사와 기본 세션', () => {
   assert.throws(() => checkPlan({ name: 'x', steps: [{ sec: 60, lo: 70 }] }), /둘 다/);
   assert.throws(() => checkPlan({ steps: [{ sec: 60 }] }), /이름/);
   for (const p of PRESETS) assert.equal(checkPlan(p).steps.length, p.steps.length, p.id);
-  assert.equal(totalSec(PRESETS.find(p => p.id === 'sst-2x20')), (15 + 25 + 25 + 5) * 60);
-  assert.equal(PRESETS.find(p => p.id === 'vo2-6x3').steps.filter(s => s.label.startsWith('VO2')).length, 6);
+  assert.ok(PRESETS.some(p => p.id === 'demo-5m'));
 });
 
 test('기록 요약: 초마다 1번, 그룹 밖 선수 제외, 평균·최대·목표 안·구간별', () => {
@@ -118,4 +118,27 @@ test('모의 방 + 세션: 모의 선수가 목표를 따라 밟고, 화면 값(
     assert.equal(a.recorded, 100);
     const t = targetWatts(short.steps[1], a.ftp); assert.ok(a.steps[1].avgPower >= t.low - 5 && a.steps[1].avgPower <= t.high + 5, `${a.code} B 평균 ${a.steps[1].avgPower}`);
   }
+});
+
+test('우리 팀 실내 세션: 11월 세부표 시간표와 총 시간·구간 시작 분이 같고, 강도는 세션 처방 시트 범위', () => {
+  const by = id => TEAM_SESSIONS.find(p => p.id === id), min = p => totalSec(p) / 60;
+  const starts = (p, prefix) => { let t = 0; const out = []; for (const st of p.steps) { if (st.label.startsWith(prefix)) out.push(t / 60); t += st.sec; } return out; };
+  assert.equal(min(by('hE-sst2x20-lc4x5')), 105); assert.deepEqual(starts(by('hE-sst2x20-lc4x5'), 'LC'), [65, 73, 81, 89]); assert.deepEqual(starts(by('hE-sst2x20-lc4x5'), 'SST'), [15, 40]);
+  assert.equal(min(by('hE-sst2x15-lc3x5')), 85); assert.deepEqual(starts(by('hE-sst2x15-lc3x5'), 'LC'), [55, 63, 71]);
+  assert.equal(min(by('hE-vo2-6x3')), 81); assert.deepEqual(starts(by('hE-vo2-6x3'), 'VO2'), [15, 21, 27, 33, 39, 45]);
+  assert.equal(min(by('m-cad6x2')), 54); assert.deepEqual(starts(by('m-cad6x2'), 'CAD'), [10, 14, 18, 22, 26, 30]);
+  assert.equal(min(by('m-cad7x2')), 58); assert.deepEqual(starts(by('m-cad7x2'), 'CAD'), [10, 14, 18, 22, 26, 30, 34]);
+  assert.equal(min(by('all-cad4x2')), 45);
+  const RX = { SST: [88, 93], VO2: [106, 120], CAD: [76, 85], LC: [80, 90] };
+  for (const p of TEAM_SESSIONS) {
+    checkPlan(p);
+    for (const st of p.steps) { const k = Object.keys(RX).find(k => st.label.startsWith(k)); if (k) assert.deepEqual([st.lo, st.hi], RX[k], `${p.id} ${st.label}`); }
+  }
+  assert.deepEqual(by('m-sst3x10').groups, ['중E', '중S']); assert.deepEqual(by('hE-vo2-6x3').groups, ['고E']); assert.deepEqual(by('z2-1h').groups, []);
+});
+
+test('여러 그룹 대상: 중E·중S 만 목표·기록', () => {
+  const run = new SessionRun(plan, { group: '중E,중S' });
+  assert.equal(run.group, '중E·중S'); assert.ok(run.includes('중E')); assert.ok(run.includes('중S')); assert.ok(!run.includes('고E')); assert.ok(!run.includes(null));
+  assert.ok(new SessionRun(plan, { group: ['고E'] }).includes('고E')); assert.ok(new SessionRun(plan).includes(null));
 });

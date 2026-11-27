@@ -115,6 +115,8 @@ function fillPresets() {
 }
 function previewPlan() {
   const plan = selectedPlan();
+  $('preview-source').textContent = `${mmss(totalSec(plan))}${plan.source ? ` · 출처: ${plan.source}` : ''}`;
+  $('target-group').value = (plan.groups ?? []).join(',');
   $('preview').innerHTML = profileSvg(plan);
   $('preview-steps').replaceChildren(...plan.steps.map(s => { const li = document.createElement('li'); li.textContent = `${s.label} ${mmss(s.sec)}${s.lo === null ? ' · 자유' : ` · ${s.lo}~${s.hi}%FTP`}`; return li; }));
 }

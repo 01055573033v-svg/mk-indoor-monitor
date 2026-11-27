@@ -44,8 +44,9 @@
     <form method="dialog">
       <h2>훈련 세션 시작</h2>
       <label>세션 <select id="preset"></select></label>
-      <label>대상 그룹 <select id="target-group"><option value="">전체</option><option>중E</option><option>중S</option><option>고E</option><option>고S</option></select></label>
+      <label>대상 그룹 <select id="target-group"><option value="">전체</option><option value="중E,중S">중등 E·S</option><option value="고E,고S">고등 E·S</option><option>중E</option><option>중S</option><option>고E</option><option>고S</option></select></label>
       <label>세션 파일(JSON) <input id="plan-file" type="file" accept=".json,application/json"></label>
+      <p id="preview-source" class="muted"></p>
       <svg id="preview" class="profile" viewBox="0 0 1000 100" preserveAspectRatio="none" aria-hidden="true"></svg>
       <ol id="preview-steps" class="steps"></ol>
       <menu><button value="start" id="start-session">시작</button><button value="cancel" formnovalidate>닫기</button></menu>

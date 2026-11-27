@@ -1,18 +1,14 @@
 // 2단계: 훈련 세션 = 구간 목록(시간 · %FTP 범위)과 진행 시계. 시각은 밖에서 넣는다(화면은 performance.now, 시험은 가상 시계).
 // 목표 와트는 선수 FTP × 구간 %FTP(내림). 범위 판정은 존 계산(zones.js)과 별개로 「이 구간 목표 안인가」만 본다.
+import { TEAM_SESSIONS } from './team-sessions.js';
 // 용어: 화면·기록에 상표 용어(NP·TSS·IF 등)는 쓰지 않는다 — 평균·최대 파워, 목표 안 비율, kJ 만.
 
 /** 구간: label(화면 이름) · sec(초) · lo/hi(%FTP 정수, 둘 다 null 이면 목표 없음 = 자유). */
 const step = (label, min, lo, hi) => ({ label, sec: Math.round(min * 60), lo, hi });
-const repeat = (n, parts) => Array.from({ length: n }, (_, i) => parts.map(p => ({ ...p, label: `${p.label} ${i + 1}/${n}` }))).flat();
 
-export const PRESETS = Object.freeze([
-  { id: 'demo-5m', name: '시연 5분(모의 확인용)', steps: [step('W-up', 1, 50, 60), step('템포', 1, 76, 90), step('휴식', 0.5, 45, 55), step('VO2', 1, 106, 120), step('휴식', 0.5, 45, 55), step('쿨다운', 1, 40, 55)] },
-  { id: 'z2-60', name: 'Z2 지구력 60분', steps: [step('W-up', 10, 50, 60), step('Z2', 40, 56, 75), step('쿨다운', 10, 45, 55)] },
-  { id: 'sst-2x20', name: 'SST 20분 × 2', steps: [step('W-up', 15, 50, 65), ...repeat(2, [step('SST', 20, 88, 94), step('휴식', 5, 50, 60)]), step('쿨다운', 5, 45, 55)] },
-  { id: 'vo2-6x3', name: 'VO2 3분 × 6', steps: [step('W-up', 15, 50, 65), ...repeat(6, [step('VO2', 3, 106, 120), step('휴식', 3, 50, 60)]), step('쿨다운', 7, 45, 55)] },
-  { id: 'threshold-3x10', name: '역치 10분 × 3', steps: [step('W-up', 15, 50, 65), ...repeat(3, [step('역치', 10, 91, 105), step('휴식', 5, 50, 60)]), step('쿨다운', 5, 45, 55)] },
-]);
+// 기본 목록 = 시연 5분(모의 확인용) + 우리 팀 실내 세션(team-sessions.js, 11-27 코치 지시: 세션 처방 시트 반영).
+export const DEMO = { id: 'demo-5m', name: '시연 5분(모의 확인용)', groups: [], source: '모의 확인용', steps: [step('W-up', 1, 50, 60), step('템포', 1, 76, 90), step('휴식', 0.5, 45, 55), step('VO2', 1, 106, 120), step('휴식', 0.5, 45, 55), step('쿨다운', 1, 40, 55)] };
+export const PRESETS = Object.freeze([...TEAM_SESSIONS, DEMO]);
 
 /** 사용자 세션(JSON) 검사: 구간 1~60개, 구간 10초~3시간, %FTP 30~200(lo ≤ hi) 또는 둘 다 비움. */
 export function checkPlan(plan) {
@@ -48,8 +44,11 @@ export function compare(power, target) {
 
 /** 진행 시계: start → (pause/resume) → stop. at(now)는 지금 구간·남은 시간. */
 export class SessionRun {
+  /** group: null(전체) · '고E' · ['중E', '중S'](여러 그룹). */
   constructor(plan, { group = null } = {}) {
-    this.plan = plan; this.group = group; this.total = totalSec(plan);
+    this.groups = (Array.isArray(group) ? group : group ? String(group).split(',') : []).filter(Boolean);
+    this.group = this.groups.length ? this.groups.join('·') : null;
+    this.plan = plan; this.total = totalSec(plan);
     this.startedAt = null; this.stoppedAt = null; this.pausedAt = null; this.pausedMs = 0;
     this.bounds = []; let acc = 0; for (const s of plan.steps) { this.bounds.push([acc, acc + s.sec]); acc += s.sec; }
   }
@@ -73,7 +72,7 @@ export class SessionRun {
       stepElapsed: e - a, stepRemaining: Math.max(0, b - e), done, paused: this.paused };
   }
   /** 이 선수에게 목표를 보여 줄지(대상 그룹이 정해졌으면 그 그룹만). */
-  includes(group) { return !this.group || this.group === group; }
+  includes(group) { return !this.groups.length || this.groups.includes(group); }
 }
 
 export const mmss = sec => { const s = Math.max(0, Math.round(sec)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
