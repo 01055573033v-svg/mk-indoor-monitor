@@ -70,3 +70,18 @@ export class MockDongle {
     return out;
   }
 }
+
+/**
+ * 2단계 모의 선수: 세션 목표를 따라 밟는다. skill 배율(0.9~1.08)로 목표 가운데를 노리고 ±4% 흔들림.
+ * 심박은 강도(파워/FTP)를 향해 천천히 따라간다. 1초에 한 번 step 을 부른다. 목표가 없으면 그대로 둔다.
+ */
+export class MockRider {
+  constructor(power, hr, seed = 1) { this.power = power; this.hr = hr; this.random = rng(seed); this.skill = 0.9 + this.random() * 0.18; }
+  step(target, ftp) {
+    if (!target || !(ftp > 0)) return;
+    const mid = (target.low + target.high) / 2;
+    this.power.watts = Math.max(0, Math.round(mid * this.skill + (this.random() - 0.5) * mid * 0.08));
+    this.power.cadence = 85 + Math.round(this.random() * 15);
+    if (this.hr) { const goal = 95 + 85 * Math.min(1.25, this.power.watts / ftp) / 1.25; this.hr.hr = Math.round(Math.min(200, Math.max(60, this.hr.hr + (goal - this.hr.hr) * 0.12))); }
+  }
+}

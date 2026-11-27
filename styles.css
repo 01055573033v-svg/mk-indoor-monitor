@@ -1,5 +1,6 @@
 :root { color-scheme: dark; --bg: #0b0f14; --card: #151b23; --line: #2a3441; --muted: #93a1b2; --text: #f3f6f9; --ok: #22c55e; --late: #eab308; --lost: #ef4444; --off: #4b5563; }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { height: 100%; }
 body { display: flex; flex-direction: column; margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; }
 button, input { font: inherit; }
@@ -38,3 +39,35 @@ dialog input { background: var(--bg); color: var(--text); border: 1px solid var(
 .ftp-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0 1rem; max-height: 50vh; overflow: auto; }
 menu { display: flex; gap: .5rem; justify-content: flex-end; padding: 0; }
 @media (max-width: 900px) { .board { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+/* ── 2단계: 세션 줄 · 목표 비교 · 그래프 · 결과 ── */
+.session { margin: .3rem 1rem 0; padding: .4rem .8rem; border: 1px solid var(--line); border-radius: .8rem; display: grid; grid-template-columns: 1fr auto; gap: .2rem 1rem; align-items: center; }
+.session .now { font-size: 1.5rem; font-variant-numeric: tabular-nums; }
+.session .now .big { font-size: 2rem; font-weight: 900; margin-left: .6rem; }
+.session .meta { grid-column: 1; color: var(--muted); }
+.session .ctl { grid-row: 1 / span 2; grid-column: 2; display: flex; gap: .4rem; }
+.session .profile { grid-column: 1 / -1; }
+.profile { width: 100%; height: 3rem; display: block; background: #0f141b; border-radius: .4rem; }
+.tile { grid-template-rows: auto 1fr auto auto; }
+.tile .head .grp { font-size: 1rem; font-weight: 600; color: var(--muted); margin-left: .5rem; }
+.tile .target { font-size: clamp(1rem, 2.2vh, 1.7rem); font-weight: 700; font-variant-numeric: tabular-nums; }
+.tile .target[data-cmp="in"] { color: var(--ok); }
+.tile .target[data-cmp="low"] { color: #60a5fa; }
+.tile .target[data-cmp="high"] { color: #f97316; }
+.tile[data-cmp="low"] { box-shadow: inset .5rem 0 0 #60a5fa; }
+.tile[data-cmp="high"] { box-shadow: inset .5rem 0 0 #f97316; }
+.tile[data-cmp="in"] { box-shadow: inset .5rem 0 0 var(--ok); }
+.tile .mid { display: flex; align-items: center; gap: .6rem; min-height: 0; }
+.tile .mid .spark { flex: 1 1 auto; min-width: 0; height: 70%; margin: 2rem 3.4rem 0 0; opacity: .8; }
+dialog.wide { max-width: 90rem; }
+dialog select { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: .4rem; padding: .4rem; min-height: 2.5rem; font: inherit; }
+dialog .row { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+.scroll { max-height: 65vh; overflow: auto; }
+.scroll table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+.scroll th, .scroll td { padding: .3rem .5rem; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+.scroll th:first-child, .scroll td:first-child { text-align: left; }
+.muted { color: var(--muted); }
+.steps { max-height: 20vh; overflow: auto; color: var(--muted); margin: .4rem 0; }
+.ftp-list label select { margin-left: .4rem; }
+.board.in-session .tile .watts { font-size: clamp(2.2rem, 7vh, 7rem); }
+.board.in-session.size-1 .tile .watts { font-size: clamp(2rem, 5vh, 4.5rem); }
+.board.in-session.size-3 .tile .watts { font-size: clamp(3rem, 9vh, 8.5rem); }
