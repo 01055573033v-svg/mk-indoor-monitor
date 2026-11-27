@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>실내 로라 모니터</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="bar">
+    <strong>실내 로라 모니터 <small>1단계 · 보기 전용 · 저장 없음</small></strong>
+    <div class="actions">
+      <button id="connect" type="button">동글 연결</button>
+      <button id="mock" type="button">모의 센서</button>
+      <button id="pair" type="button" aria-pressed="false">센서 짝 맞추기</button>
+      <button id="settings-btn" type="button">설정</button>
+      <button id="size" type="button">타일 크기</button>
+      <button id="full" type="button">전체 화면</button>
+    </div>
+  </header>
+  <p id="notice" class="notice" role="status" hidden></p>
+  <section id="dongles" class="dongles" aria-label="동글 상태"></section>
+  <main id="board" class="board size-2" aria-live="off"></main>
+  <section id="unpaired" class="panel" hidden aria-label="짝 없는 센서"></section>
+  <dialog id="settings">
+    <form method="dialog">
+      <h2>설정 <small>이 맥북 크롬에만 저장 · 실명 넣지 않음(P코드만)</small></h2>
+      <label>인원 <input id="athletes" type="number" min="1" max="24" step="1"></label>
+      <label>ANT+ 네트워크 키 <input id="netkey" type="password" autocomplete="off" placeholder="16자리 16진수(동글 연결에만 필요)"></label>
+      <div id="ftp-list" class="ftp-list"></div>
+      <menu><button value="save" id="save-settings">저장</button><button value="cancel" formnovalidate>닫기</button></menu>
+    </form>
+  </dialog>
+  <script type="module" src="src/app.js"></script>
+</body>
+</html>

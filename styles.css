@@ -1,0 +1,40 @@
+:root { color-scheme: dark; --bg: #0b0f14; --card: #151b23; --line: #2a3441; --muted: #93a1b2; --text: #f3f6f9; --ok: #22c55e; --late: #eab308; --lost: #ef4444; --off: #4b5563; }
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { display: flex; flex-direction: column; margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; }
+button, input { font: inherit; }
+button { background: var(--card); color: var(--text); border: 1px solid var(--line); border-radius: .5rem; padding: .5rem .9rem; min-height: 2.75rem; cursor: pointer; }
+button[aria-pressed="true"] { border-color: var(--ok); }
+.bar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: .5rem; padding: .5rem 1rem; border-bottom: 1px solid var(--line); }
+.bar small { color: var(--muted); font-weight: 400; margin-left: .5rem; }
+.actions { display: flex; flex-wrap: wrap; gap: .4rem; }
+.notice { margin: .5rem 1rem; padding: .6rem .9rem; border-radius: .5rem; background: #3b2a06; }
+.dongles { display: flex; flex-wrap: wrap; gap: 1.5rem; padding: .4rem 1rem; color: var(--muted); font-size: 1rem; font-variant-numeric: tabular-nums; }
+.board { flex: 1 1 auto; min-height: 0; display: grid; gap: .6rem; padding: .6rem 1rem 1rem; grid-template-columns: repeat(4, minmax(0, 1fr)); grid-auto-rows: minmax(0, 1fr); }
+.board.pairing { flex: 0 0 auto; grid-auto-rows: 11rem; }
+.tile { position: relative; background: var(--card); border: .35rem solid var(--line); border-radius: .9rem; padding: .5rem .8rem; display: grid; grid-template-rows: auto 1fr auto; min-height: 0; overflow: hidden; }
+.tile.hidden { display: none; }
+.tile[data-level="정상"] { border-color: var(--line); }
+.tile[data-level="주의"] { border-color: var(--late); }
+.tile[data-level="끊김"] { border-color: var(--lost); }
+.tile[data-level="오프라인"] { border-color: var(--off); opacity: .55; }
+.tile.alerting { animation: blink 1s steps(2, start) infinite; }
+@keyframes blink { to { border-color: transparent; } }
+.tile .head { display: flex; justify-content: space-between; font-size: 1.6rem; font-weight: 800; }
+.tile .head .state { font-size: 1rem; font-weight: 600; color: var(--muted); }
+.tile .watts { font-size: clamp(3rem, 10vh, 9rem); font-weight: 900; line-height: 1; font-variant-numeric: tabular-nums; align-self: center; }
+.tile .watts small { font-size: .3em; color: var(--muted); margin-left: .2em; }
+.tile .sub { display: flex; justify-content: space-between; gap: .6rem; font-size: clamp(1.1rem, 2.6vh, 2rem); font-variant-numeric: tabular-nums; }
+.tile .zone { position: absolute; right: .8rem; top: 2.6rem; font-weight: 900; font-size: 1.4rem; padding: .1rem .5rem; border-radius: .4rem; color: #000; }
+.tile .via { position: absolute; left: .8rem; bottom: 3.2rem; font-size: .9rem; color: var(--late); }
+.size-1 .tile .watts { font-size: clamp(2.2rem, 6vh, 5rem); }
+.size-3 .tile .watts { font-size: clamp(4rem, 12vh, 10rem); }
+.panel { margin: 0 1rem 1rem; padding: .8rem; border: 1px solid var(--line); border-radius: .8rem; }
+.panel table { width: 100%; border-collapse: collapse; font-size: 1.1rem; }
+.panel td, .panel th { padding: .35rem .5rem; border-bottom: 1px solid var(--line); text-align: left; }
+dialog { background: var(--card); color: var(--text); border: 1px solid var(--line); border-radius: .8rem; max-width: 40rem; width: 92vw; }
+dialog label { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin: .4rem 0; }
+dialog input { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: .4rem; padding: .4rem; min-height: 2.5rem; }
+.ftp-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0 1rem; max-height: 50vh; overflow: auto; }
+menu { display: flex; gap: .5rem; justify-content: flex-end; padding: 0; }
+@media (max-width: 900px) { .board { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
